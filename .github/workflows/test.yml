@@ -1,0 +1,64 @@
+name: Test
+
+on: [push, pull_request]
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  git-leaks:
+    name: GitLeaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - uses: gacts/gitleaks@v1 # Action page: <https://github.com/gacts/gitleaks>
+
+  lint:
+    name: Golang-CI (lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      - uses: golangci/golangci-lint-action@v4 # Action page: <https://github.com/golangci/golangci-lint-action>
+        with: { skip-pkg-cache: true, skip-build-cache: true }
+
+  test:
+    strategy:
+      matrix:
+        go-version: [1.18.x, 1.21.x, 1.22.x]
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+      - name: Test
+        run: go test -race -bench=. -benchmem ./...
+  coverage:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+#      pages: write
+    steps:
+      - name: Update coverage report
+        uses: ncruces/go-coverage-report@main
+        with:
+          report: 'true'
+          chart: 'true'
+          amend: 'true'
+        continue-on-error: true

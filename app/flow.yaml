@@ -1,0 +1,18 @@
+commands:
+  php serve:
+    artisan:
+      pipe: true
+      cmd: [ 'php', 'artisan', '--port', '8010' ]
+      dir: 'app'
+
+  yarn dev:
+    ls:
+      cmd: [ 'ls', '-la' ]
+    yarn:
+      pipe: true
+      cmd: [ 'yarn', 'dev' ]
+      dir: 'app'
+  net:
+    ping:
+      pipe: true
+      cmd: [ 'ping', '-c', '3','ya.ru' ]
