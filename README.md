@@ -7,3 +7,9 @@
 ```bash
 go install github.com/efureev/parallel
 ```
+
+## Run
+
+```bash
+parallel -f /...../app/flow.yaml
+```
