@@ -106,8 +106,6 @@ func (l *FileLoader) loadFile(file string) []byte {
 	return f
 }
 
-// YamlFileMarshaller
-
 type YamlFileMarshaller struct {
 }
 
