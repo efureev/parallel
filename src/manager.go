@@ -132,8 +132,8 @@ func handleReader(reader *bufio.Reader, cmd Command, log *reggol.Logger) error {
 
 		str = strings.TrimSuffix(str, "\n")
 
-		cmdName = fmt.Sprintf(`%s (%d) %s`, cmdName, i, div)
-		log.Log().Blocks(chainNameStyleText, cmdName, str).Push()
+		cmdNameStyled := fmt.Sprintf(`%s (%d) %s`, cmdName, i, div)
+		log.Log().Blocks(chainNameStyleText, cmdNameStyled, str).Push()
 
 		i++
 
