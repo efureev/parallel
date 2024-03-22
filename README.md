@@ -28,6 +28,7 @@ parallel -f /...../app/flow.yaml
 
 ![screen1.png](.assets%2Fscreen1.png)
 ![sceen2.png](.assets%2Fsceen2.png)
+![screen3.png](.assets%2Fscreen3.png)
 
 ## Structure of FlowFile
 
