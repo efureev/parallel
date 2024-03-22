@@ -2,6 +2,8 @@
 
 [![Go Coverage](https://github.com/efureev/parallel/wiki/coverage.svg)](https://raw.githack.com/wiki/efureev/reggol/coverage.html)
 
+Allows you to run several console commands in parallel and output its output in your term.
+
 ## Install
 
 ```bash
@@ -22,6 +24,11 @@ Of a flow-file has different destination:
 parallel -f /...../app/flow.yaml
 ```
 
+## Screens
+
+![screen1.png](.assets%2Fscreen1.png)
+![sceen2.png](.assets%2Fsceen2.png)
+
 ## Structure of FlowFile
 
 Lang: `yaml`
@@ -34,6 +41,13 @@ commands: # list of parallel commands
       cmd: [ 'php', 'artisan', '--port', '8010' ] # One Command and its args 
       dir: 'app' # Directory of an execution
 
+  nginx:
+    docker:
+      pipe: true
+      cmd: [ 'docker', 'container', 'run',  '--rm', '-p', '8090:80', '--name', 'ngixn', 'nginx' ]
+      format:
+        cmdName: '%CMD_NAME% %CMD_ARGS%' # command name formatting 
+
   yarn dev:
     ls: # This command will be executed without Pipe
       cmd: [ 'ls', '-la' ]
@@ -41,6 +55,7 @@ commands: # list of parallel commands
       pipe: true
       cmd: [ 'yarn', 'dev' ]
       dir: 'app'
+
   net:
     ping:
       pipe: true

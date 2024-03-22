@@ -1,18 +1,25 @@
 commands:
-  php serve:
-    artisan:
-      pipe: true
-      cmd: [ 'php', 'artisan', '--port', '8010' ]
-      dir: 'app'
+#  php serve:
+#    artisan:
+#      pipe: true
+#      cmd: [ 'php', 'artisan', '--port', '8010' ]
+#      dir: 'app'
 
-  yarn dev:
-    ls:
-      cmd: [ 'ls', '-la' ]
-    yarn:
+  #  yarn dev:
+  #    ls:
+  #      cmd: [ 'ls', '-la' ]
+  #    yarn:
+  #      pipe: true
+  #      cmd: [ 'yarn', 'dev' ]
+  #      dir: 'app'
+  nginx:
+    docker:
       pipe: true
-      cmd: [ 'yarn', 'dev' ]
-      dir: 'app'
-  net:
-    ping:
-      pipe: true
-      cmd: [ 'ping', '-c', '3','ya.ru' ]
+      cmd: [ 'docker', 'container', 'run',  '--rm', '-p', '8090:80', '--name', 'ngixn', 'nginx' ]
+      format:
+#        cmdName: '%CMD_NAME% %CMD_ARGS%'
+        cmdName: '%CMD_NAME%'
+#  net:
+#    ping:
+#      pipe: true
+#      cmd: [ 'ping', '-c', '3','ya.ru' ]

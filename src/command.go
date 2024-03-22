@@ -1,11 +1,16 @@
 package parallel
 
+type Format struct {
+	CmdName string
+}
+
 type Command struct {
 	Name   string
 	Cmd    string
 	Args   []string
 	Dir    string
 	Pipe   bool
+	Format Format
 	parent CommandParent
 }
 

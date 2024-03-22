@@ -11,10 +11,15 @@ type FileMarshaller interface {
 	Unmarshal(b []byte) (flowRaw, error)
 }
 
+type format struct {
+	CmdName string `yaml:"cmdName"`
+}
+
 type command struct {
-	Cmd  []string
-	Dir  string
-	Pipe bool
+	Cmd    []string
+	Dir    string
+	Pipe   bool
+	Format format
 }
 
 type flowRaw = map[string]commandChain
@@ -72,11 +77,12 @@ func (l *FileLoader) transformToStruct(data flowRaw) Flow {
 		for cmdName, cmdRaw := range chainRaw {
 			chain.Add(
 				Command{
-					Name: cmdName,
-					Cmd:  cmdRaw.Cmd[0],
-					Args: cmdRaw.Cmd[1:],
-					Dir:  cmdRaw.Dir,
-					Pipe: cmdRaw.Pipe,
+					Name:   cmdName,
+					Cmd:    cmdRaw.Cmd[0],
+					Args:   cmdRaw.Cmd[1:],
+					Dir:    cmdRaw.Dir,
+					Pipe:   cmdRaw.Pipe,
+					Format: Format{CmdName: cmdRaw.Format.CmdName},
 				})
 		}
 

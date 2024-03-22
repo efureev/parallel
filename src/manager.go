@@ -107,6 +107,22 @@ func (m *manager) RunWithPipe(command Command) {
 	}
 }
 
+func nameReplace(cmd Command) string {
+	if cmd.Format.CmdName == `` {
+		return fmt.Sprintf(`%s %s`, cmd.getName(), strings.Join(cmd.Args, ` `))
+	}
+
+	tlpList := [2]string{`%CMD_NAME%`, `%CMD_ARGS%`}
+	valueList := [2]string{cmd.getName(), strings.Join(cmd.Args, ` `)}
+
+	result := cmd.Format.CmdName
+	for idx, tpl := range tlpList {
+		result = strings.ReplaceAll(result, tpl, valueList[idx])
+	}
+
+	return result
+}
+
 func handleReader(reader *bufio.Reader, cmd Command, log *reggol.Logger) error {
 	chain := cmd.GetChain()
 	chainName := strings.ToUpper(chain.Name)
@@ -114,8 +130,7 @@ func handleReader(reader *bufio.Reader, cmd Command, log *reggol.Logger) error {
 	div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(`>`)
 
 	chainNameStyleText := chainNameStyle.Wrap(chainName) + ` ` + div
-
-	cmdName := fmt.Sprintf(`%s %s`, cmd.getName(), strings.Join(cmd.Args, ` `))
+	cmdName := nameReplace(cmd)
 	i := 0
 
 	for {
@@ -157,7 +172,7 @@ func handleErrorReader(reader *bufio.Reader, cmd Command, log *reggol.Logger) er
 	chainNameStyle := chain.Color
 	chainNameStyleText := chainNameStyle.Wrap(chainName + ` >`)
 
-	cmdName := fmt.Sprintf(`%s %s`, cmd.getName(), strings.Join(cmd.Args, ` `)) + ` >`
+	cmdName := nameReplace(cmd)
 
 	for {
 		str, err := reader.ReadString('\n')
@@ -174,7 +189,7 @@ func handleErrorReader(reader *bufio.Reader, cmd Command, log *reggol.Logger) er
 
 		str = strings.TrimSuffix(str, "\n")
 
-		log.Err(errors.New(str)).Blocks(chainNameStyleText, cmdName, str).Push()
+		log.Err(errors.New(str)).Blocks(chainNameStyleText, cmdName).Push()
 
 		if err != nil {
 			if err == io.EOF {
