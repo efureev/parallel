@@ -2,6 +2,7 @@ package parallel
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -30,7 +31,7 @@ func Manager(logger *reggol.Logger) *manager {
 	return instance
 }
 
-func (m *manager) Run(command Command) {
+func (m *manager) Run(ctx context.Context, command Command) {
 	cmd := exec.Command(command.Cmd)
 	cmd.Dir = command.Dir
 	cmd.Env = os.Environ()
@@ -57,9 +58,12 @@ func (m *manager) Run(command Command) {
 	}
 
 	m.lgr.Log().Blocks(chainNameStyle.Wrap(chainName+` > `), cmdName, content).Push()
+
+	// need to stop waiting..
+	// ctx.Done <- ...
 }
 
-func (m *manager) RunWithPipe(command Command) {
+func (m *manager) RunWithPipe(ctx context.Context, command Command) {
 	cmd := exec.Command(command.Cmd, command.Args...)
 	cmd.Dir = command.Dir
 	cmd.Env = os.Environ()
@@ -205,7 +209,7 @@ func handleErrorReader(reader *bufio.Reader, cmd Command, log *reggol.Logger) er
 	return nil
 }
 
-func (m *manager) RunParallel(chains []CommandChain) {
+func (m *manager) RunParallel(ctx context.Context, chains []CommandChain) {
 	var waitGroup sync.WaitGroup
 
 	waitGroup.Add(len(chains))
@@ -216,18 +220,17 @@ func (m *manager) RunParallel(chains []CommandChain) {
 		go func(ch CommandChain) {
 			defer waitGroup.Done()
 
-			m.RunChain(ch)
-
+			m.RunChain(ctx, ch)
 		}(chain)
 	}
 }
 
-func (m *manager) RunChain(chain CommandChain) {
+func (m *manager) RunChain(ctx context.Context, chain CommandChain) {
 	for _, cmd := range chain.commands {
 		if cmd.Pipe {
-			m.RunWithPipe(cmd)
+			m.RunWithPipe(ctx, cmd)
 		} else {
-			m.Run(cmd)
+			m.Run(ctx, cmd)
 		}
 	}
 }
