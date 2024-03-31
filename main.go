@@ -1,12 +1,18 @@
 package main
 
 import (
+	"context"
+	"os/signal"
+	"syscall"
+
 	parallel "github.com/efureev/parallel/src"
 )
 
 func main() {
-
 	flags := parallel.ParseFlag()
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer stop()
 
 	lgr := parallel.Logger()
 
@@ -15,7 +21,9 @@ func main() {
 
 	mgr := parallel.Manager(lgr)
 
-	mgr.RunParallel(flow.Chains)
+	mgr.RunParallel(ctx, flow.Chains)
+
+	<-ctx.Done()
 
 	lgr.Debug().Msg(`App Finished`)
 }

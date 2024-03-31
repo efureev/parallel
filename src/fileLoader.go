@@ -39,7 +39,7 @@ func (l *FileLoader) Load(file string) Flow {
 	c, err := l.marshaller.Unmarshal(l.loadFile(file))
 
 	if err != nil {
-		l.lgr.Panic().Msg(`missing config-file`)
+		l.lgr.Fatal().AnErr(`unable to decode config-file`, err).Push()
 	}
 
 	r := l.transformToStruct(c)
@@ -94,11 +94,11 @@ func (l *FileLoader) transformToStruct(data flowRaw) Flow {
 
 func (l *FileLoader) loadFile(file string) []byte {
 	if file == `` {
-		l.lgr.Panic().Msg(`missing config-file`)
+		l.lgr.Fatal().Msg(`missing a path of the config-file`)
 	}
 
 	if !IsExistPath(file) {
-		l.lgr.Panic().Str(`file`, file).Msg(`missing config-file`)
+		l.lgr.Fatal().Str(`file`, file).Msg(`missing a config-file`)
 	}
 
 	f, err := os.ReadFile(file)
