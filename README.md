@@ -42,12 +42,26 @@ commands: # list of parallel commands
       cmd: [ 'php', 'artisan', '--port', '8010' ] # One Command and its args 
       dir: 'app' # Directory of an execution
 
-  nginx:
-    docker:
+  nginx: # CMD mode
+    nginxCmd:
       pipe: true
       cmd: [ 'docker', 'container', 'run',  '--rm', '-p', '8090:80', '--name', 'ngixn', 'nginx' ]
       format:
-        cmdName: '%CMD_NAME% %CMD_ARGS%' # command name formatting 
+        cmdName: '%CMD_NAME% %CMD_ARGS%' # command name formatting
+
+    nginxDocker:
+      docker:
+        image:
+          name: 'nginx'
+          # tag: 'v1', # default 'latest'
+          # pull: 'always' # default: none
+        ports: [
+          '127.0.0.1:80:8080',
+          '127.0.0.1:443:8443',
+        ]
+        # removeAfterAll: false # default: true
+        # cmd: 'exec' # default: 'run'
+
 
   yarn dev:
     ls: # This command will be executed without Pipe

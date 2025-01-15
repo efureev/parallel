@@ -1,0 +1,13 @@
+commands:
+  logging:
+    buggregator:
+      docker:
+        image:
+          name: 'ghcr.io/buggregator/server'
+          pull: 'always'
+        ports: [
+          '127.0.0.1:8000:8000',
+          '127.0.0.1:1025:1025',
+          '127.0.0.1:9912:9912',
+          '127.0.0.1:9913:9913',
+        ]

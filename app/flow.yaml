@@ -12,8 +12,8 @@ commands:
   #      pipe: true
   #      cmd: [ 'yarn', 'dev' ]
   #      dir: 'app'
-  nginx:
-    docker:
+  nginx: # Chain
+    docker: # Cmd
       pipe: true
       cmd: [ 'docker', 'container', 'run',  '--rm', '-p', '8090:80', '--name', 'ngixn', 'nginx' ]
       format:

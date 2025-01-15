@@ -15,8 +15,20 @@ type format struct {
 	CmdName string `yaml:"cmdName"`
 }
 
+type dockerCommand struct {
+	Image struct {
+		Name string `yaml:"name"`
+		Tag  string `yaml:"tag"`  // latest
+		Pull string `yaml:"pull"` // 'always',
+	} `yaml:"image"`
+	RemoveAfterAll bool     `yaml:"removeAfterAll"` // true
+	Cmd            string   `yaml:"cmd"`            // run
+	Ports          []string `yaml:"ports"`
+}
+
 type command struct {
 	Cmd    []string
+	Docker *dockerCommand
 	Dir    string
 	Pipe   bool
 	Format format
@@ -37,7 +49,6 @@ func NewFileLoader(marshaller FileMarshaller, lgr *reggol.Logger) *FileLoader {
 
 func (l *FileLoader) Load(file string) Flow {
 	c, err := l.marshaller.Unmarshal(l.loadFile(file))
-
 	if err != nil {
 		l.lgr.Fatal().AnErr(`unable to decode config-file`, err).Push()
 	}
@@ -75,15 +86,56 @@ func (l *FileLoader) transformToStruct(data flowRaw) Flow {
 		}
 
 		for cmdName, cmdRaw := range chainRaw {
-			chain.Add(
-				Command{
+			var cmd Command
+
+			if cmdRaw.Docker != nil {
+				dckrCmd := cmdRaw.Docker.Cmd
+				if dckrCmd == `` {
+					dckrCmd = `run`
+				}
+
+				args := []string{dckrCmd, `--name`, cmdName}
+
+				if cmdRaw.Docker.RemoveAfterAll {
+					args = append(args, `--rm`)
+				}
+
+				if cmdRaw.Docker.Image.Pull != `` {
+					args = append(args, `--pull`, cmdRaw.Docker.Image.Pull)
+				}
+
+				for _, port := range cmdRaw.Docker.Ports {
+					args = append(args, `-p`, port)
+				}
+
+				imgName := cmdRaw.Docker.Image.Name
+
+				if cmdRaw.Docker.Image.Tag == `` {
+					cmdRaw.Docker.Image.Tag = `latest`
+				}
+
+				args = append(args, imgName+`:`+cmdRaw.Docker.Image.Tag)
+
+				cmd = Command{
+					Name:   cmdName,
+					Cmd:    `docker`,
+					Args:   args,
+					Dir:    cmdRaw.Dir,
+					Pipe:   true,
+					Format: Format{CmdName: cmdRaw.Format.CmdName},
+				}
+			} else {
+				cmd = Command{
 					Name:   cmdName,
 					Cmd:    cmdRaw.Cmd[0],
 					Args:   cmdRaw.Cmd[1:],
 					Dir:    cmdRaw.Dir,
 					Pipe:   cmdRaw.Pipe,
 					Format: Format{CmdName: cmdRaw.Format.CmdName},
-				})
+				}
+			}
+
+			chain.Add(cmd)
 		}
 
 		flow.AddChain(chain)
