@@ -7,7 +7,7 @@ Allows you to run several console commands in parallel and output its output in 
 ## Install
 
 ```bash
-go install github.com/efureev/parallel
+go install github.com/efureev/parallel@latest
 ```
 
 ## Run
