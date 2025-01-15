@@ -21,7 +21,7 @@ type dockerCommand struct {
 		Tag  string `yaml:"tag"`  // latest
 		Pull string `yaml:"pull"` // 'always',
 	} `yaml:"image"`
-	RemoveAfterAll bool     `yaml:"removeAfterAll"` // true
+	RemoveAfterAll *bool    `yaml:"removeAfterAll"` // true
 	Cmd            string   `yaml:"cmd"`            // run
 	Ports          []string `yaml:"ports"`
 }
@@ -96,7 +96,7 @@ func (l *FileLoader) transformToStruct(data flowRaw) Flow {
 
 				args := []string{dckrCmd, `--name`, cmdName}
 
-				if cmdRaw.Docker.RemoveAfterAll {
+				if cmdRaw.Docker.RemoveAfterAll == nil {
 					args = append(args, `--rm`)
 				}
 
