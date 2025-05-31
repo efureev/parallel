@@ -1,6 +1,7 @@
 # Parallel
 
 [![Go Coverage](https://github.com/efureev/parallel/wiki/coverage.svg)](https://raw.githack.com/wiki/efureev/reggol/coverage.html)
+[![Test](https://github.com/efureev/parallel/actions/workflows/test.yml/badge.svg)](https://github.com/efureev/parallel/actions/workflows/test.yml)
 
 A tool for running multiple console commands in parallel with output display in the terminal.
 
