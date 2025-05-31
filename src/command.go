@@ -1,5 +1,7 @@
 package parallel
 
+import "fmt"
+
 type Format struct {
 	CmdName string
 }
@@ -76,4 +78,12 @@ func (cmd *Command) getName() string {
 	}
 
 	return cmd.Cmd
+}
+
+// Validate checks if the command is properly configured
+func (cmd *Command) Validate() error {
+	if cmd.Cmd == "" {
+		return fmt.Errorf("command cannot be empty")
+	}
+	return nil
 }

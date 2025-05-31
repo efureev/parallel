@@ -15,23 +15,64 @@ import (
 	"github.com/efureev/reggol"
 )
 
+const (
+	cmdNameTemplate   = "%CMD_NAME%"
+	cmdArgsTemplate   = "%CMD_ARGS%"
+	outputIndentation = "          "
+	dividerSymbol     = ">"
+	newlineChar       = "\n"
+)
+
+var (
+	ErrCommandExecution = errors.New("command execution failed")
+	ErrPipeCreation     = errors.New("pipe creation failed")
+)
+
+type CommandExecutor interface {
+	Execute(ctx context.Context, command Command) error
+	ExecuteWithPipe(ctx context.Context, command Command) error
+	ExecuteParallel(ctx context.Context, chains []CommandChain) error
+}
+
+type outputHandler func(chainNameStyleText, cmdName, content string, counter int)
+
 type manager struct {
 	lgr *reggol.Logger
 }
 
-var instance *manager
+var (
+	instance *manager
+	mu       sync.Mutex
+)
 
-func Manager(logger *reggol.Logger) *manager {
+func NewManager(logger *reggol.Logger) CommandExecutor {
+	mu.Lock()
+	defer mu.Unlock()
+
 	if instance == nil {
 		instance = &manager{
 			lgr: logger,
 		}
 	}
-
 	return instance
 }
 
-func (m *manager) Run(ctx context.Context, command Command) {
+type commandOutput struct {
+	chainName string
+	cmdName   string
+	content   string
+	counter   int
+}
+
+func (m *manager) formatChainInfo(cmd Command) *commandOutput {
+	chain := cmd.GetChain()
+	return &commandOutput{
+		chainName: strings.ToUpper(chain.Name),
+		cmdName:   nameReplace(cmd),
+	}
+}
+
+func (m *manager) Execute(ctx context.Context, command Command) error {
 	cmd := exec.Command(command.Cmd)
 	cmd.Dir = command.Dir
 	cmd.Env = os.Environ()
@@ -39,76 +80,163 @@ func (m *manager) Run(ctx context.Context, command Command) {
 	stdout, err := cmd.CombinedOutput()
 	if err != nil {
 		m.lgr.Err(err).Push()
-
-		return
+		return fmt.Errorf("%w: %v", ErrCommandExecution, err)
 	}
 
-	strs := strings.Split(string(stdout), "\n")
-
-	chain := command.GetChain()
-	chainName := strings.ToUpper(chain.Name)
-	chainNameStyle := chain.Color
-
-	cmdName := fmt.Sprintf(`%s %s`, command.getName(), strings.Join(command.Args, ` `))
-
-	content := "\n"
-
-	for _, msg := range strs {
-		content += strings.Repeat(` `, 10) + msg + "\n"
+	output := m.formatChainInfo(command)
+	lines := strings.Split(string(stdout), newlineChar)
+	content := newlineChar
+	for _, msg := range lines {
+		content += outputIndentation + msg + newlineChar
 	}
 
-	m.lgr.Log().Blocks(chainNameStyle.Wrap(chainName+` > `), cmdName, content).Push()
+	m.lgr.Log().Blocks(
+		command.GetChain().Color.Wrap(output.chainName+dividerSymbol),
+		output.cmdName,
+		content,
+	).Push()
 
-	// need to stop waiting..
-	// ctx.Done <- ...
+	return nil
 }
 
-func (m *manager) RunWithPipe(ctx context.Context, command Command) {
+func (m *manager) ExecuteWithPipe(ctx context.Context, command Command) error {
 	cmd := exec.Command(command.Cmd, command.Args...)
 	cmd.Dir = command.Dir
 	cmd.Env = os.Environ()
 
-	stdout, err := cmd.StdoutPipe()
-
+	stdout, stderr, err := setupPipes(cmd)
 	if err != nil {
-		m.lgr.Fatal().Msgf("failed creating command stdoutPipe: %s", err)
+		return fmt.Errorf("%w: %v", ErrPipeCreation, err)
 	}
-
 	defer stdout.Close()
-
-	stdoutReader := bufio.NewReader(stdout)
-	stderr, err := cmd.StderrPipe()
-
-	if err != nil {
-		m.lgr.Error().AnErr("failed creating command stderrPipe", err).Push()
-
-		return
-	}
-
 	defer stderr.Close()
-
-	stderrReader := bufio.NewReader(stderr)
 
 	if err := cmd.Start(); err != nil {
 		m.lgr.Error().AnErr("Failed starting command", err).Push()
-
-		return
+		return fmt.Errorf("%w: %v", ErrCommandExecution, err)
 	}
 
-	go handleReader(stdoutReader, command, m.lgr)
-	go handleErrorReader(stderrReader, command, m.lgr)
+	var wg sync.WaitGroup
+	wg.Add(2)
 
-	if err := cmd.Wait(); err != nil {
-		if exiterr, ok := err.(*exec.ExitError); ok {
-			if status, ok := exiterr.Sys().(syscall.WaitStatus); ok {
-				m.lgr.Error().Int("Exit Status", status.ExitStatus())
+	stdoutHandler := func(chainNameStyleText, cmdName, content string, counter int) {
+		div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(dividerSymbol)
+		cmdNameStyled := fmt.Sprintf(`%s (%d) %s`, cmdName, counter, div)
+		m.lgr.Log().Blocks(chainNameStyleText, cmdNameStyled, content).Push()
+	}
 
-				return
+	stderrHandler := func(chainNameStyleText, cmdName, content string, counter int) {
+		m.lgr.Err(errors.New(content)).Blocks(chainNameStyleText, cmdName).Push()
+	}
+
+	go func() {
+		defer wg.Done()
+		m.handleOutput(bufio.NewReader(stdout), command, stdoutHandler)
+	}()
+
+	go func() {
+		defer wg.Done()
+		m.handleOutput(bufio.NewReader(stderr), command, stderrHandler)
+	}()
+
+	wg.Wait()
+
+	return handleCommandCompletion(cmd, m.lgr)
+}
+
+func (m *manager) handleOutput(reader *bufio.Reader, cmd Command, handler outputHandler) error {
+	chain := cmd.GetChain()
+	chainName := strings.ToUpper(chain.Name)
+	chainNameStyle := chain.Color
+	div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(dividerSymbol)
+	chainNameStyleText := chainNameStyle.Wrap(chainName) + ` ` + div
+	cmdName := nameReplace(cmd)
+
+	counter := 0
+	for {
+		str, err := reader.ReadString('\n')
+		if len(str) == 0 && err != nil {
+			if err == io.EOF {
+				break
 			}
+			m.lgr.Err(err).Push()
+			return err
 		}
 
-		return
+		str = strings.TrimSuffix(str, newlineChar)
+		handler(chainNameStyleText, cmdName, str, counter)
+		counter++
+
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			m.lgr.Err(err).Push()
+			return err
+		}
 	}
+	return nil
+}
+
+func handleCommandCompletion(cmd *exec.Cmd, logger *reggol.Logger) error {
+	if err := cmd.Wait(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+				logger.Error().Int("Exit Status", status.ExitStatus()).Msg("Command failed")
+				return fmt.Errorf("%w: exit status %d", ErrCommandExecution, status.ExitStatus())
+			}
+		}
+		return fmt.Errorf("%w: %v", ErrCommandExecution, err)
+	}
+	return nil
+}
+
+func (m *manager) ExecuteParallel(ctx context.Context, chains []CommandChain) error {
+	var wg sync.WaitGroup
+	wg.Add(len(chains))
+	errs := make(chan error, len(chains))
+
+	for _, chain := range chains {
+		go func(ch CommandChain) {
+			defer wg.Done()
+			if err := m.executeChain(ctx, ch); err != nil {
+				errs <- err
+			}
+		}(chain)
+	}
+
+	go func() {
+		wg.Wait()
+		close(errs)
+	}()
+
+	for err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *manager) executeChain(ctx context.Context, chain CommandChain) error {
+	for _, cmd := range chain.commands {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			if cmd.Pipe {
+				if err := m.ExecuteWithPipe(ctx, cmd); err != nil {
+					return err
+				}
+			} else {
+				if err := m.Execute(ctx, cmd); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func nameReplace(cmd Command) string {
@@ -116,10 +244,10 @@ func nameReplace(cmd Command) string {
 		return fmt.Sprintf(`%s %s`, cmd.getName(), strings.Join(cmd.Args, ` `))
 	}
 
-	tlpList := [2]string{`%CMD_NAME%`, `%CMD_ARGS%`}
+	tlpList := [2]string{cmdNameTemplate, cmdArgsTemplate}
 	valueList := [2]string{cmd.getName(), strings.Join(cmd.Args, ` `)}
-
 	result := cmd.Format.CmdName
+
 	for idx, tpl := range tlpList {
 		result = strings.ReplaceAll(result, tpl, valueList[idx])
 	}
@@ -127,110 +255,17 @@ func nameReplace(cmd Command) string {
 	return result
 }
 
-func handleReader(reader *bufio.Reader, cmd Command, log *reggol.Logger) error {
-	chain := cmd.GetChain()
-	chainName := strings.ToUpper(chain.Name)
-	chainNameStyle := chain.Color
-	div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(`>`)
-
-	chainNameStyleText := chainNameStyle.Wrap(chainName) + ` ` + div
-	cmdName := nameReplace(cmd)
-	i := 0
-
-	for {
-		str, err := reader.ReadString('\n')
-		if len(str) == 0 && err != nil {
-			if err == io.EOF {
-				break
-			}
-
-			log.Err(err).Push()
-
-			return err
-		}
-
-		str = strings.TrimSuffix(str, "\n")
-
-		cmdNameStyled := fmt.Sprintf(`%s (%d) %s`, cmdName, i, div)
-		log.Log().Blocks(chainNameStyleText, cmdNameStyled, str).Push()
-
-		i++
-
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-
-			log.Err(err).Push()
-
-			return err
-		}
+func setupPipes(cmd *exec.Cmd) (stdout io.ReadCloser, stderr io.ReadCloser, err error) {
+	stdout, err = cmd.StdoutPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed creating stdout pipe: %w", err)
 	}
 
-	return nil
-}
-
-func handleErrorReader(reader *bufio.Reader, cmd Command, log *reggol.Logger) error {
-	chain := cmd.GetChain()
-	chainName := strings.ToUpper(chain.Name)
-	chainNameStyle := chain.Color
-	chainNameStyleText := chainNameStyle.Wrap(chainName + ` >`)
-
-	cmdName := nameReplace(cmd)
-
-	for {
-		str, err := reader.ReadString('\n')
-
-		if len(str) == 0 && err != nil {
-			if err == io.EOF {
-				break
-			}
-
-			log.Err(err).Push()
-
-			return err
-		}
-
-		str = strings.TrimSuffix(str, "\n")
-
-		log.Err(errors.New(str)).Blocks(chainNameStyleText, cmdName).Push()
-
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-
-			log.Err(err).Push()
-
-			return err
-		}
+	stderr, err = cmd.StderrPipe()
+	if err != nil {
+		stdout.Close() // Clean up the first pipe if second fails
+		return nil, nil, fmt.Errorf("failed creating stderr pipe: %w", err)
 	}
 
-	return nil
-}
-
-func (m *manager) RunParallel(ctx context.Context, chains []CommandChain) {
-	var waitGroup sync.WaitGroup
-
-	waitGroup.Add(len(chains))
-
-	defer waitGroup.Wait()
-
-	for _, chain := range chains {
-		go func(ch CommandChain) {
-			defer waitGroup.Done()
-
-			m.RunChain(ctx, ch)
-		}(chain)
-	}
-}
-
-func (m *manager) RunChain(ctx context.Context, chain CommandChain) {
-	for _, cmd := range chain.commands {
-		if cmd.Pipe {
-			m.RunWithPipe(ctx, cmd)
-		} else {
-			m.Run(ctx, cmd)
-		}
-	}
+	return stdout, stderr, nil
 }

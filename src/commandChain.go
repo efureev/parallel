@@ -1,6 +1,9 @@
 package parallel
 
-import "github.com/efureev/reggol"
+import (
+	"fmt"
+	"github.com/efureev/reggol"
+)
 
 type CommandParent interface {
 	GetNamePath() string
@@ -13,6 +16,14 @@ type Flow struct {
 
 func (f *Flow) AddChain(chain CommandChain) {
 	f.Chains = append(f.Chains, chain)
+}
+
+// Validate validates all chains in the flow
+func (f *Flow) Validate() error {
+	if len(f.Chains) == 0 {
+		return fmt.Errorf("flow must contain at least one chain")
+	}
+	return nil
 }
 
 type CommandChains map[string]CommandChains

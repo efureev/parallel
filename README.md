@@ -2,58 +2,62 @@
 
 [![Go Coverage](https://github.com/efureev/parallel/wiki/coverage.svg)](https://raw.githack.com/wiki/efureev/reggol/coverage.html)
 
-Allows you to run several console commands in parallel and output its output in your term.
+A tool for running multiple console commands in parallel with output display in the terminal.
 
-## Install
+## Installation
 
-```bash
+```shell script
 go install github.com/efureev/parallel@latest
 ```
 
-## Run
 
-If you have a flow-file `.parallelrc.yaml` in a folder of execution:
+## Usage
 
-```bash
+If you have a configuration file `.parallelrc.yaml` in the execution folder:
+
+```shell script
 parallel
 ```
 
-Of a flow-file has different destination:
 
-```bash
-parallel -f /...../app/flow.yaml
+If the configuration file is located elsewhere:
+
+```shell script
+parallel -f /path/to/config/flow.yaml
 ```
 
-## Screens
+
+## Screenshots
 
 ![screen1.png](.assets%2Fscreen1.png)
 ![sceen2.png](.assets%2Fsceen2.png)
 ![screen3.png](.assets%2Fscreen3.png)
 
-## Structure of FlowFile
+## Configuration File Structure
 
-Lang: `yaml`
+Language: `yaml`
 
 ```yaml
 commands: # list of parallel commands
-  php serve: # name of a Command Chain
-    artisan: # name of Command
-      pipe: true  # listen stdOutput & stdErr for this command
-      cmd: [ 'php', 'artisan', '--port', '8010' ] # One Command and its args 
-      dir: 'app' # Directory of an execution
+  php-server: # command chain name
+    artisan: # command name
+      pipe: true  # listen to stdOutput & stdErr for this command
+      cmd: [ 'php', 'artisan', 'serve', '--port', '8010' ] # command and its arguments
+      dir: 'app' # execution directory
 
-  nginx: # CMD mode
-    nginxCmd:
+  web-services: # command mode
+    nginx-cmd:
       pipe: true
-      cmd: [ 'docker', 'container', 'run',  '--rm', '-p', '8090:80', '--name', 'ngixn', 'nginx' ]
+      cmd: [ 'docker', 'container', 'run',  '--rm', '-p', '8090:80', '--name', 'nginx', 'nginx' ]
       format:
         cmdName: '%CMD_NAME% %CMD_ARGS%' # command name formatting
 
-    nginxDocker:
+  docker-services: # Docker mode
+    nginx-docker:
       docker:
         image:
           name: 'nginx'
-          # tag: 'v1', # default 'latest'
+          # tag: 'v1' # default 'latest'
           # pull: 'always' # default: none
         ports: [
           '127.0.0.1:80:8080',
@@ -62,17 +66,28 @@ commands: # list of parallel commands
         # removeAfterAll: false # default: true
         # cmd: 'exec' # default: 'run'
 
-
-  yarn dev:
-    ls: # This command will be executed without Pipe
+  frontend:
+    list-files: # this command will execute without pipe
       cmd: [ 'ls', '-la' ]
-    yarn:
+    yarn-dev:
       pipe: true
       cmd: [ 'yarn', 'dev' ]
       dir: 'app'
 
-  net:
-    ping:
+  network:
+    ping-test:
       pipe: true
       cmd: [ 'ping', '-c', '3','ya.ru' ]
 ```
+
+
+## Features
+
+- **Command Chains**: Group related commands into logical blocks for better organization
+- **Docker Support**: Built-in support for running Docker containers with automatic command formatting
+- **Colored Output**: Each command chain gets a unique color for better readability
+- **Output Control**: Control which commands should display their output via the `pipe` parameter
+- **Working Directories**: Specify custom directories for command execution
+- **Command Formatting**: Customize how command names are displayed in the output
+- **Auto-cleanup**: Docker containers are automatically removed after execution (configurable)
+- **Flexible Configuration**: Support for both direct commands and Docker-based workflows

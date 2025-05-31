@@ -7,7 +7,17 @@ import (
 )
 
 func GenColors(shuffle bool) []reggol.TextStyle {
-	list := []reggol.TextStyle{
+	baseColors := getBaseColors()
+
+	if shuffle {
+		shuffleColors(baseColors)
+	}
+
+	return appendBrightVariants(baseColors)
+}
+
+func getBaseColors() []reggol.TextStyle {
+	return []reggol.TextStyle{
 		reggol.ColorFgYellow,
 		reggol.ColorFgRed,
 		reggol.ColorFgBlue,
@@ -15,17 +25,22 @@ func GenColors(shuffle bool) []reggol.TextStyle {
 		reggol.ColorFgCyan,
 		reggol.ColorFgMagenta,
 	}
+}
 
-	if shuffle {
-		for i := range list {
-			j := rand.Intn(i + 1)
-			list[i], list[j] = list[j], list[i]
-		}
+func shuffleColors(colors []reggol.TextStyle) {
+	for i := range colors {
+		j := rand.Intn(i + 1)
+		colors[i], colors[j] = colors[j], colors[i]
+	}
+}
+
+func appendBrightVariants(baseColors []reggol.TextStyle) []reggol.TextStyle {
+	result := make([]reggol.TextStyle, len(baseColors), len(baseColors)*2)
+	copy(result, baseColors)
+
+	for _, color := range baseColors {
+		result = append(result, color|reggol.ColorFgBright)
 	}
 
-	for _, clr := range list {
-		list = append(list, clr|reggol.ColorFgBright)
-	}
-
-	return list
+	return result
 }

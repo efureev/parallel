@@ -2,31 +2,37 @@ package parallel
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/efureev/reggol"
 )
 
-var loggerInstance *reggol.Logger
+var (
+	loggerInstance *reggol.Logger
+	once           sync.Once
+)
 
 func Logger() *reggol.Logger {
-	if loggerInstance == nil {
-		loggerInstance = makeLogger()
-	}
-
+	once.Do(func() {
+		loggerInstance = createLogger()
+	})
 	return loggerInstance
 }
 
-func makeLogger() *reggol.Logger {
+func createLogger() *reggol.Logger {
+	trans := createTransformer()
+	output := reggol.NewConsoleWriter(func(w *reggol.ConsoleWriter) {
+		w.Trans = trans
+	})
+	l := reggol.New(output)
+	return &l
+}
+
+func createTransformer() *reggol.ConsoleTransformer {
 	trans := reggol.NewConsoleTransformer(false, time.TimeOnly)
 
-	// trans.HideLevel()
-
-	// trans.FormatFieldNameFn = func(i interface{}) string {
-	//	return reggol.SetColor(i, colors.FgBlue, trans.IsNoColor())
-	// }
 	colorList := GenColors(true)
-
 	var pipe []reggol.TextStyle
 
 	trans.BeforeTransformFn = func(data reggol.EventData) {
@@ -40,17 +46,9 @@ func makeLogger() *reggol.Logger {
 	trans.FormatFieldFn = func(i interface{}) string {
 		var currColor reggol.TextStyle
 		currColor, pipe = pipe[0], pipe[1:]
-
 		list := i.([2]string)
-
 		return fmt.Sprintf(`%s%s`, reggol.SetColor(list[0]+`=`, currColor, trans.IsNoColor()), list[1])
 	}
 
-	output := reggol.NewConsoleWriter(func(w *reggol.ConsoleWriter) {
-		w.Trans = trans
-	})
-
-	l := reggol.New(output)
-
-	return &l
+	return &trans
 }
