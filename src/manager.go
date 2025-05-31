@@ -86,6 +86,7 @@ func (m *manager) Execute(ctx context.Context, command Command) error {
 	output := m.formatChainInfo(command)
 	lines := strings.Split(string(stdout), newlineChar)
 	content := newlineChar
+
 	for _, msg := range lines {
 		content += outputIndentation + msg + newlineChar
 	}
@@ -180,25 +181,30 @@ func (m *manager) handleOutput(reader *bufio.Reader, cmd Command, handler output
 
 func handleCommandCompletion(cmd *exec.Cmd, logger *reggol.Logger) error {
 	if err := cmd.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
 				logger.Error().Int("Exit Status", status.ExitStatus()).Msg("Command failed")
 				return fmt.Errorf("%w: exit status %d", ErrCommandExecution, status.ExitStatus())
 			}
 		}
+
 		return fmt.Errorf("%w: %v", ErrCommandExecution, err)
 	}
+
 	return nil
 }
 
 func (m *manager) ExecuteParallel(ctx context.Context, chains []CommandChain) error {
 	var wg sync.WaitGroup
+
 	wg.Add(len(chains))
 	errs := make(chan error, len(chains))
 
 	for _, chain := range chains {
 		go func(ch CommandChain) {
 			defer wg.Done()
+
 			if err := m.executeChain(ctx, ch); err != nil {
 				errs <- err
 			}

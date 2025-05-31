@@ -1,38 +1,28 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2043
 
-APP_NAME="parallel"
+# Build configuration
+readonly APP_NAME="parallel"
+readonly BUILD_DIR=${BUILD_PATH:-"build"}
+readonly TARGET_OS="darwin"
+readonly TARGET_ARCH="amd64"
+readonly MAPPED_ARCH="x64"
+readonly CGO_SETTING=0
 
-BUILD_PATH=${BUILD_PATH:-"build"}
-
-#VERSION_COMMIT=$(git log --pretty="%h" -n1 HEAD)
-#VERSION_DEFAULT=$(git tag --sort=-v:refname --list "v[0-9]*" | head -n 1)
-#VERSION=${VERSION:-$VERSION_DEFAULT}
-
-rm -rf "./${BUILD_PATH}"
+# Clean previous build
+rm -rf "./${BUILD_DIR}"
 
 echo "Building options"
-echo "- VERSION: $VERSION"
-echo "- COMMIT: $VERSION_COMMIT"
+echo "- TARGET_OS: $TARGET_OS"
+echo "- TARGET_ARCH: $TARGET_ARCH"
 echo " "
 
-#BUILDING_FLAGS="\
-#    -X $NS/$SLUG/src/config.version='$VERSION-$VERSION_COMMIT' \
-#"
+# Build for target platform
+EXECUTABLE_NAME="$APP_NAME.$TARGET_OS.$MAPPED_ARCH"
+echo "Building: OS: $TARGET_OS ARCH: $TARGET_ARCH file: $EXECUTABLE_NAME"
 
-#for OS in darwin linux; do
-for OS in darwin; do
-  for ARCH in amd64; do
-    ARCHX=x86
-    if [ $ARCH == "amd64" ]; then
-      ARCHX=x64
-    fi
-    CURR_NAME="$APP_NAME.$OS.$ARCHX"
-    echo "Building: OS: $OS ARCH: $ARCH file: $CURR_NAME"
-
-    CGO_ENABLED=0 GOOS=$OS GOARCH=$ARCH go build -a -installsuffix cgo -ldflags="$BUILDING_FLAGS" \
-      -o "$BUILD_PATH/$CURR_NAME"
-  done
-done
+CGO_ENABLED=$CGO_SETTING GOOS=$TARGET_OS GOARCH=$TARGET_ARCH \
+  go build -a -installsuffix cgo \
+  -o "$BUILD_DIR/$EXECUTABLE_NAME"
 
 echo "Done!"

@@ -1,6 +1,8 @@
 module github.com/efureev/parallel
 
-go 1.22
+go 1.24.0
+
+toolchain go1.24.3
 
 //replace github.com/efureev/reggol => ../reggol
 
@@ -11,5 +13,5 @@ require (
 
 require (
 	gh.tarampamp.am/colors v1.2.1 // indirect
-	golang.org/x/sys v0.18.0 // indirect
+	golang.org/x/sys v0.33.0 // indirect
 )
