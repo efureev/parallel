@@ -1,6 +1,6 @@
 # Parallel
 
-[![Go Coverage](https://github.com/efureev/parallel/wiki/coverage.svg)](https://raw.githack.com/wiki/efureev/reggol/coverage.html)
+[![Go Coverage](https://github.com/efureev/parallel/wiki/coverage.svg)](https://raw.githack.com/wiki/efureev/parallel/coverage.html)
 [![Test](https://github.com/efureev/parallel/actions/workflows/test.yml/badge.svg)](https://github.com/efureev/parallel/actions/workflows/test.yml)
 
 A small CLI to run multiple console commands in parallel with readable, colored output. Useful for local development when you need to run several services/tools at once (web server, queues, bundlers, watchers, etc.).
