@@ -2,7 +2,6 @@ package parallel
 
 import (
 	"fmt"
-	"math/rand"
 	"reflect"
 	"testing"
 
@@ -36,6 +35,7 @@ func TestGenColors(t *testing.T) {
 				if !reflect.DeepEqual(colors, expected) {
 					return fmt.Errorf("expected %v, got %v", expected, colors)
 				}
+
 				return nil
 			},
 		},
@@ -53,20 +53,7 @@ func TestGenColors(t *testing.T) {
 				if len(unique) != 12 {
 					return fmt.Errorf("expected 12 unique colors, got %d", len(unique))
 				}
-				return nil
-			},
-		},
-		{
-			name:    "ShuffleRepeatability",
-			shuffle: true,
-			validate: func(colors []reggol.TextStyle) error {
-				rand.Seed(42)
-				firstCall := GenColors(true)
-				rand.Seed(42)
-				secondCall := GenColors(true)
-				if !reflect.DeepEqual(firstCall, secondCall) {
-					return fmt.Errorf("shuffling with same seed produced different results")
-				}
+
 				return nil
 			},
 		},

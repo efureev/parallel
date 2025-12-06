@@ -46,7 +46,7 @@ linters:
     - prealloc
     - unconvert
     - whitespace
-    - wsl
+    - wsl_v5
   settings:
     dupl:
       threshold: 100
@@ -85,7 +85,7 @@ linters:
           - gochecknoglobals
           - gocognit
           - scopelint
-          - wsl
+          - wsl_v5
         path: _test\.go
     paths:
       - third_party$

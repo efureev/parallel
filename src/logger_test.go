@@ -1,9 +1,10 @@
 package parallel
 
 import (
-	"github.com/efureev/reggol"
 	"sync"
 	"testing"
+
+	"github.com/efureev/reggol"
 )
 
 func TestLogger(t *testing.T) {

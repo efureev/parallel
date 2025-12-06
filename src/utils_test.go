@@ -17,10 +17,12 @@ func TestPathExists(t *testing.T) {
 			name: "existing file",
 			path: "testfile.txt",
 			setup: func() {
-				os.WriteFile("testfile.txt", []byte("test content"), 0644)
+				if err := os.WriteFile("testfile.txt", []byte("test content"), 0o600); err != nil {
+					t.Fatalf("failed to write test file: %v", err)
+				}
 			},
 			cleanup: func() {
-				os.Remove("testfile.txt")
+				_ = os.Remove("testfile.txt")
 			},
 			expected: true,
 		},
@@ -35,10 +37,12 @@ func TestPathExists(t *testing.T) {
 			name: "existing directory",
 			path: "testdir",
 			setup: func() {
-				os.Mkdir("testdir", 0755)
+				if err := os.Mkdir("testdir", 0o755); err != nil {
+					t.Fatalf("failed to create test dir: %v", err)
+				}
 			},
 			cleanup: func() {
-				os.Remove("testdir")
+				_ = os.Remove("testdir")
 			},
 			expected: true,
 		},
@@ -53,11 +57,13 @@ func TestPathExists(t *testing.T) {
 			name: "no permissions",
 			path: "protectedfile.txt",
 			setup: func() {
-				os.WriteFile("protectedfile.txt", []byte("protected"), 0000)
+				if err := os.WriteFile("protectedfile.txt", []byte("protected"), 0o000); err != nil {
+					t.Fatalf("failed to create protected file: %v", err)
+				}
 			},
 			cleanup: func() {
-				os.Chmod("protectedfile.txt", 0644)
-				os.Remove("protectedfile.txt")
+				_ = os.Chmod("protectedfile.txt", 0o644)
+				_ = os.Remove("protectedfile.txt")
 			},
 			expected: true,
 		},

@@ -6,17 +6,17 @@ import (
 	"os"
 )
 
-// Default configuration values
+// Default configuration values.
 const (
 	defaultConfigPath = ".parallelrc.yaml"
 )
 
-// Config holds the application configuration parameters parsed from command line flags
+// Config holds the application configuration parameters parsed from command line flags.
 type Config struct {
 	ConfigFilePath string
 }
 
-// Option defines a functional option for configuring flag parsing
+// Option defines a functional option for configuring flag parsing.
 type Option func(*flag.FlagSet)
 
 // ParseFlags parses command line flags and returns the configuration.

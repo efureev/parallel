@@ -1,25 +1,66 @@
 commands:
-#  php serve:
-#    artisan:
-#      pipe: true
-#      cmd: [ 'php', 'artisan', '--port', '8010' ]
-#      dir: 'app'
-
-  #  yarn dev:
-  #    ls:
-  #      cmd: [ 'ls', '-la' ]
-  #    yarn:
+  #  php serve:
+  #    artisan:
   #      pipe: true
-  #      cmd: [ 'yarn', 'dev' ]
+  #      cmd: [ 'php', 'artisan', '--port', '8010' ]
   #      dir: 'app'
-  nginx: # Chain
-    docker: # Cmd
+
+#  queue:
+#    resize:
+#      cmd: [  'php', 'artisan', 'queue:work', '--queue=image-resizing' ]
+#      dir: 'ap/Volumes/Data/Dev/dev/me/php/projects/FinTrack/app'
+#      pipe: true
+#      format: { cmdName: '%CMD_NAME%' }
+#
+#    parsing:
+#      cmd: [ 'php', 'artisan', 'queue:work', '--queue=docs-parsing' ]
+#      dir: '/Volumes/Data/Dev/dev/me/php/projects/FinTrack/app'
+#      pipe: true
+#      format: { cmdName: '%CMD_NAME%' }
+
+  server:
+    resize:
+      cmd: ['php', 'artisan', 'queue:work', '--queue=image-resizing' ]
       pipe: true
-      cmd: [ 'docker', 'container', 'run',  '--rm', '-p', '8090:80', '--name', 'ngixn', 'nginx' ]
-      format:
-#        cmdName: '%CMD_NAME% %CMD_ARGS%'
-        cmdName: '%CMD_NAME%'
-  net:
-    ping:
+      dir: '/Volumes/Data/Dev/dev/me/php/projects/FinTrack/app'
+      format: { cmdName: '%CMD_NAME%' }
+    parsing:
+      cmd: ['php', 'artisan', 'queue:work', '--queue=parsing' ]
       pipe: true
-      cmd: [ 'ping', '-c', '3','ya.ru' ]
+      dir: '/Volumes/Data/Dev/dev/me/php/projects/FinTrack/app'
+      format: { cmdName: '%CMD_NAME%' }
+#
+#    php-test:
+#      cmd: ['php', '-S', '127.0.0.1:8092']
+#      pipe: true
+#      format: { cmdName: '%CMD_NAME%' }
+
+#    artisan:
+#      cmd: [ 'php', 'artisan', 'serve','--port=8090' ]
+#      dir: '/Volumes/Data/Dev/dev/me/php/projects/matrix/app'
+#      pipe: true
+#      format: { cmdName: '%CMD_NAME%' }
+
+#  yarn:
+#    ls:
+#      cmd: [ 'ls', '-la' ]
+#    install:
+#      pipe: true
+#      cmd: [ 'yarn', 'install' ]
+#      dir: 'app'
+#    watch:
+#      pipe: true
+#      cmd: [ 'yarn', 'dev' ]
+#      dir: 'app'
+  #  nginx: # Chain
+  #    docker: # Cmd
+  #      pipe: true
+  #      cmd: [ 'docker', 'container', 'run',  '--rm', '-p', '8090:80', '--name', 'ngixn', 'nginx' ]
+  #      format:
+  #        cmdName: '%CMD_NAME% %CMD_ARGS%'
+  #        cmdName: '%CMD_NAME%'
+#  net:
+#    ping:
+#      pipe: true
+#      cmd: [ 'ping', '-c', '10','ya.ru' ]
+#

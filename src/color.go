@@ -27,6 +27,9 @@ func getBaseColors() []reggol.TextStyle {
 	}
 }
 
+// shuffleColors randomizes order of colors; crypto strength is not required here.
+//
+//nolint:gosec // math/rand is sufficient for UI color shuffling
 func shuffleColors(colors []reggol.TextStyle) {
 	for i := range colors {
 		j := rand.Intn(i + 1)
@@ -35,7 +38,9 @@ func shuffleColors(colors []reggol.TextStyle) {
 }
 
 func appendBrightVariants(baseColors []reggol.TextStyle) []reggol.TextStyle {
-	result := make([]reggol.TextStyle, len(baseColors), len(baseColors)*2)
+	const capacityFactor = 2
+
+	result := make([]reggol.TextStyle, len(baseColors), len(baseColors)*capacityFactor)
 	copy(result, baseColors)
 
 	for _, color := range baseColors {

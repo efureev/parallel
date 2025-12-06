@@ -18,8 +18,9 @@ help: ## Show this help
 
 # Code Formatting
 fmt: ## Run source code formatter tools
-	$(DC_GO_RUN) gofmt -s -w -d .
-	$(DC_GO_RUN) go mod tidy
+	docker-compose run $(DC_RUN_ARGS) --no-deps go sh -c 'go install golang.org/x/tools/cmd/goimports@latest && $$GOPATH/bin/goimports -d -w .'
+	docker-compose run $(DC_RUN_ARGS) --no-deps go gofmt -s -w -d .
+	docker-compose run $(DC_RUN_ARGS) --no-deps go go mod tidy
 
 # Code Quality
 lint: ## Run go linters

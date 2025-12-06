@@ -2,6 +2,7 @@ package parallel
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/efureev/reggol"
 )
@@ -28,62 +30,126 @@ var (
 	ErrPipeCreation     = errors.New("pipe creation failed")
 )
 
+// CommandExecutor описывает внешний API менеджера для выполнения цепочек команд
+// и управления сигналом завершения.
 type CommandExecutor interface {
-	Execute(ctx context.Context, command Command) error
-	ExecuteWithPipe(ctx context.Context, command Command) error
 	ExecuteParallel(ctx context.Context, chains []CommandChain) error
+	SetShutdownSignal(sig syscall.Signal)
 }
-
-type outputHandler func(chainNameStyleText, cmdName, content string, counter int)
 
 type manager struct {
 	lgr *reggol.Logger
+
+	procs       *processRegistry
+	shutdownMu  sync.RWMutex
+	shutdownSig syscall.Signal
+
+	output *outputFormatter
+	chains *chainExecutor
 }
 
-var (
-	instance *manager
-	mu       sync.Mutex
-)
-
+// NewManager создаёт новый экземпляр менеджера.
 func NewManager(logger *reggol.Logger) CommandExecutor {
-	mu.Lock()
-	defer mu.Unlock()
-
-	if instance == nil {
-		instance = &manager{
-			lgr: logger,
-		}
+	m := &manager{
+		lgr:         logger,
+		procs:       newProcessRegistry(),
+		shutdownSig: syscall.SIGTERM,
 	}
-	return instance
+
+	m.output = newOutputFormatter(logger)
+	m.chains = newChainExecutor(logger, m, m.stopAllCommands)
+
+	return m
 }
 
-type commandOutput struct {
-	chainName string
-	cmdName   string
-	content   string
-	counter   int
+// SetShutdownSignal позволяет задать сигнал, который будет отправляться дочерним процессам
+// при завершении работы приложения (например, SIGINT / SIGTERM / SIGQUIT).
+func (m *manager) SetShutdownSignal(sig syscall.Signal) {
+	m.shutdownMu.Lock()
+	defer m.shutdownMu.Unlock()
+
+	m.shutdownSig = sig
 }
 
-func (m *manager) formatChainInfo(cmd Command) *commandOutput {
-	chain := cmd.GetChain()
-	return &commandOutput{
-		chainName: strings.ToUpper(chain.Name),
-		cmdName:   nameReplace(cmd),
+func (m *manager) getShutdownSignal() syscall.Signal {
+	m.shutdownMu.RLock()
+	defer m.shutdownMu.RUnlock()
+
+	if m.shutdownSig == 0 {
+		return syscall.SIGTERM
 	}
+
+	return m.shutdownSig
 }
 
+func (m *manager) stopAllCommands() {
+	if m.procs == nil {
+		return
+	}
+
+	m.procs.stopAll(m.lgr, m.getShutdownSignal())
+}
+
+//nolint:funlen
 func (m *manager) Execute(ctx context.Context, command Command) error {
-	cmd := exec.Command(command.Cmd)
+	//nolint:gosec // command/args come from trusted config for CLI tool
+	cmd := exec.Command(command.Cmd, command.Args...)
 	cmd.Dir = command.Dir
 	cmd.Env = os.Environ()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-	stdout, err := cmd.CombinedOutput()
-	if err != nil {
-		m.lgr.Err(err).Push()
-		return fmt.Errorf("%w: %v", ErrCommandExecution, err)
+	var stdoutBuf bytes.Buffer
+
+	cmd.Stdout = &stdoutBuf
+	cmd.Stderr = &stdoutBuf
+
+	if err := cmd.Start(); err != nil {
+		m.lgr.Err(err).Msg("Failed to start command")
+
+		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
 	}
 
-	output := m.formatChainInfo(command)
+	// Регистрируем команду для корректного shutdown
+	cmdKey := fmt.Sprintf("%s_%d", command.Cmd, cmd.Process.Pid)
+
+	m.procs.add(cmdKey, cmd)
+	defer m.procs.remove(cmdKey)
+
+	done := make(chan error, 1)
+
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case <-ctx.Done():
+		m.lgr.Info().Str("cmd", command.Cmd).Msg("Context canceled, stopping command")
+
+		if err := sendSignalToGroup(cmd, m.getShutdownSignal()); err != nil {
+			m.lgr.Warn().Err(err).Str("cmd", command.Cmd).Msg("Failed to send shutdown signal to process group")
+		}
+
+		select {
+		case <-time.After(forceKillTimeout):
+			m.lgr.Warn().Str("cmd", command.Cmd).Msg("Force killing command group")
+
+			if err := killProcessGroup(cmd); err != nil {
+				m.lgr.Warn().Err(err).Str("cmd", command.Cmd).Msg("Failed to kill process group")
+			}
+		case <-done:
+		}
+
+		return ctx.Err()
+
+	case err := <-done:
+		if err != nil {
+			m.lgr.Err(err).Push()
+
+			return fmt.Errorf("%w: %w", ErrCommandExecution, err)
+		}
+	}
+
+	stdout := stdoutBuf.Bytes()
+
+	output := m.output.formatChainInfo(command)
 	lines := strings.Split(string(stdout), newlineChar)
 	content := newlineChar
 
@@ -100,25 +166,39 @@ func (m *manager) Execute(ctx context.Context, command Command) error {
 	return nil
 }
 
+//nolint:funlen // function orchestrates IO, signals, and waits; splitting would hurt readability here
 func (m *manager) ExecuteWithPipe(ctx context.Context, command Command) error {
+	//nolint:gosec // command/args come from trusted config for CLI tool
 	cmd := exec.Command(command.Cmd, command.Args...)
 	cmd.Dir = command.Dir
 	cmd.Env = os.Environ()
 
+	// Настраиваем process group для правильной передачи сигналов
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
 	stdout, stderr, err := setupPipes(cmd)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrPipeCreation, err)
+		return fmt.Errorf("%w: %w", ErrPipeCreation, err)
 	}
 	defer stdout.Close()
 	defer stderr.Close()
 
 	if err := cmd.Start(); err != nil {
 		m.lgr.Error().AnErr("Failed starting command", err).Push()
-		return fmt.Errorf("%w: %v", ErrCommandExecution, err)
+
+		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
 	}
 
+	// Регистрируем команду для отслеживания
+	cmdKey := fmt.Sprintf("%s_%d", command.Cmd, cmd.Process.Pid)
+
+	m.procs.add(cmdKey, cmd)
+	defer m.procs.remove(cmdKey)
+
 	var wg sync.WaitGroup
-	wg.Add(2)
+
+	const numOutputGoroutines = 2
+	wg.Add(numOutputGoroutines)
 
 	stdoutHandler := func(chainNameStyleText, cmdName, content string, counter int) {
 		div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(dividerSymbol)
@@ -130,119 +210,91 @@ func (m *manager) ExecuteWithPipe(ctx context.Context, command Command) error {
 		m.lgr.Err(errors.New(content)).Blocks(chainNameStyleText, cmdName).Push()
 	}
 
-	go func() {
-		defer wg.Done()
-		m.handleOutput(bufio.NewReader(stdout), command, stdoutHandler)
-	}()
+	// Контекст для отмены чтения вывода
+	outputCtx, outputCancel := context.WithCancel(ctx)
+	defer outputCancel()
 
 	go func() {
 		defer wg.Done()
-		m.handleOutput(bufio.NewReader(stderr), command, stderrHandler)
-	}()
 
-	wg.Wait()
-
-	return handleCommandCompletion(cmd, m.lgr)
-}
-
-func (m *manager) handleOutput(reader *bufio.Reader, cmd Command, handler outputHandler) error {
-	chain := cmd.GetChain()
-	chainName := strings.ToUpper(chain.Name)
-	chainNameStyle := chain.Color
-	div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(dividerSymbol)
-	chainNameStyleText := chainNameStyle.Wrap(chainName) + ` ` + div
-	cmdName := nameReplace(cmd)
-
-	counter := 0
-	for {
-		str, err := reader.ReadString('\n')
-		if len(str) == 0 && err != nil {
-			if err == io.EOF {
-				break
-			}
+		if err := m.output.handleOutput(outputCtx, bufio.NewReader(stdout), command, stdoutHandler); err != nil {
 			m.lgr.Err(err).Push()
-			return err
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+
+		if err := m.output.handleOutput(outputCtx, bufio.NewReader(stderr), command, stderrHandler); err != nil {
+			m.lgr.Err(err).Push()
+		}
+	}()
+
+	// Ждем завершения команды или отмены контекста
+	done := make(chan error, 1)
+
+	go func() {
+		done <- cmd.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+		// Контекст отменен, завершаем команду
+		m.lgr.Info().Str("cmd", command.Cmd).Msg("Context canceled, stopping command")
+
+		// Отменяем чтение вывода
+		outputCancel()
+
+		// Отправляем дочернему процессу сигнал завершения (такой же, как получил менеджер)
+		if err := sendSignalToGroup(cmd, m.getShutdownSignal()); err != nil {
+			m.lgr.Warn().Err(err).Msg("Failed to send shutdown signal to process group")
 		}
 
-		str = strings.TrimSuffix(str, newlineChar)
-		handler(chainNameStyleText, cmdName, str, counter)
-		counter++
+		// Ждем немного для graceful shutdown
+		select {
+		case <-done:
+			// Процесс завершился
+		case <-time.After(forceKillTimeout):
+			// Принудительно завершаем всю группу
+			m.lgr.Warn().Str("cmd", command.Cmd).Msg("Force killing command group")
+
+			if err := killProcessGroup(cmd); err != nil {
+				m.lgr.Warn().Err(err).Str("cmd", command.Cmd).Msg("Failed to kill process group")
+			}
+		}
+
+		wg.Wait()
+
+		return ctx.Err()
+
+	case err := <-done:
+		// Команда завершилась
+		outputCancel()
+		wg.Wait()
 
 		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			m.lgr.Err(err).Push()
-			return err
+			return handleCommandCompletionErr(err, m.lgr)
 		}
+
+		return nil
 	}
-	return nil
 }
 
-func handleCommandCompletion(cmd *exec.Cmd, logger *reggol.Logger) error {
-	if err := cmd.Wait(); err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-				logger.Error().Int("Exit Status", status.ExitStatus()).Msg("Command failed")
-				return fmt.Errorf("%w: exit status %d", ErrCommandExecution, status.ExitStatus())
-			}
-		}
+func handleCommandCompletionErr(waitErr error, logger *reggol.Logger) error {
+	var exitErr *exec.ExitError
+	if errors.As(waitErr, &exitErr) {
+		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
+			logger.Error().Int("Exit Status", status.ExitStatus()).Msg("Command failed")
 
-		return fmt.Errorf("%w: %v", ErrCommandExecution, err)
+			return fmt.Errorf("%w: exit status %d", ErrCommandExecution, status.ExitStatus())
+		}
 	}
 
-	return nil
+	return fmt.Errorf("%w: %w", ErrCommandExecution, waitErr)
 }
 
 func (m *manager) ExecuteParallel(ctx context.Context, chains []CommandChain) error {
-	var wg sync.WaitGroup
-
-	wg.Add(len(chains))
-	errs := make(chan error, len(chains))
-
-	for _, chain := range chains {
-		go func(ch CommandChain) {
-			defer wg.Done()
-
-			if err := m.executeChain(ctx, ch); err != nil {
-				errs <- err
-			}
-		}(chain)
-	}
-
-	go func() {
-		wg.Wait()
-		close(errs)
-	}()
-
-	for err := range errs {
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (m *manager) executeChain(ctx context.Context, chain CommandChain) error {
-	for _, cmd := range chain.commands {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			if cmd.Pipe {
-				if err := m.ExecuteWithPipe(ctx, cmd); err != nil {
-					return err
-				}
-			} else {
-				if err := m.Execute(ctx, cmd); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
+	return m.chains.ExecuteParallel(ctx, chains)
 }
 
 func nameReplace(cmd Command) string {
@@ -269,7 +321,11 @@ func setupPipes(cmd *exec.Cmd) (stdout io.ReadCloser, stderr io.ReadCloser, err 
 
 	stderr, err = cmd.StderrPipe()
 	if err != nil {
-		stdout.Close() // Clean up the first pipe if second fails
+		err := stdout.Close()
+		if err != nil {
+			return nil, nil, err
+		} // Clean up the first pipe if second fails
+
 		return nil, nil, fmt.Errorf("failed creating stderr pipe: %w", err)
 	}
 

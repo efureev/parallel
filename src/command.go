@@ -80,10 +80,11 @@ func (cmd *Command) getName() string {
 	return cmd.Cmd
 }
 
-// Validate checks if the command is properly configured
+// Validate checks if the command is properly configured.
 func (cmd *Command) Validate() error {
 	if cmd.Cmd == "" {
 		return fmt.Errorf("command cannot be empty")
 	}
+
 	return nil
 }

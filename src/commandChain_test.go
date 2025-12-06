@@ -5,17 +5,19 @@ import (
 	"testing"
 )
 
+const testChainName = "TestChain"
+
 func TestFlow_AddChain(t *testing.T) {
 	t.Run("Add single chain", func(t *testing.T) {
 		f := &Flow{}
-		chain := CommandChain{Name: "TestChain"}
+		chain := CommandChain{Name: testChainName}
 		f.AddChain(chain)
 
 		if len(f.Chains) != 1 {
 			t.Errorf("expected 1 chain, got %d", len(f.Chains))
 		}
-		if f.Chains[0].Name != "TestChain" {
-			t.Errorf("expected chain name 'TestChain', got %s", f.Chains[0].Name)
+		if f.Chains[0].Name != testChainName {
+			t.Errorf("expected chain name '%s', got %s", testChainName, f.Chains[0].Name)
 		}
 	})
 }
@@ -31,7 +33,10 @@ func TestFlow_Validate(t *testing.T) {
 			name: "Valid flow with chains",
 			setupFlow: func() *Flow {
 				f := &Flow{}
-				f.AddChain(CommandChain{Name: "ValidChain"})
+				chain := CommandChain{Name: "ValidChain"}
+				chain.Add(Command{Cmd: "echo"})
+				f.AddChain(chain)
+
 				return f
 			},
 			expectErr:   false,
@@ -64,18 +69,18 @@ func TestFlow_Validate(t *testing.T) {
 
 func TestCommandChain_GetNamePath(t *testing.T) {
 	t.Run("Get name path of chain", func(t *testing.T) {
-		cc := CommandChain{Name: "TestChain"}
-		if cc.GetNamePath() != "TestChain" {
-			t.Errorf("expected name path 'TestChain', got %s", cc.GetNamePath())
+		cc := CommandChain{Name: testChainName}
+		if cc.GetNamePath() != testChainName {
+			t.Errorf("expected name path '%s', got %s", testChainName, cc.GetNamePath())
 		}
 	})
 }
 
 func TestCommandChain_GetChainName(t *testing.T) {
 	t.Run("Get chain name", func(t *testing.T) {
-		cc := CommandChain{Name: "TestChain"}
-		if cc.GetChainName() != "TestChain" {
-			t.Errorf("expected chain name 'TestChain', got %s", cc.GetChainName())
+		cc := CommandChain{Name: testChainName}
+		if cc.GetChainName() != testChainName {
+			t.Errorf("expected chain name '%s', got %s", testChainName, cc.GetChainName())
 		}
 	})
 }
