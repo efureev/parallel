@@ -5,7 +5,7 @@ go 1.25.0
 //replace github.com/efureev/reggol => ../reggol
 
 require (
-	github.com/efureev/reggol v0.3.1
+	github.com/efureev/reggol v0.4.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 

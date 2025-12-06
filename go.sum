@@ -1,7 +1,7 @@
 gh.tarampamp.am/colors v1.3.0 h1:y214FkXd/YsnTt5oxClOUYOZIrHBO9dpLYxn+hWAxRk=
 gh.tarampamp.am/colors v1.3.0/go.mod h1:dcvCIw5azlFgTRMW5U8GU2UuN2kPsxGPwSSzFbSvB64=
-github.com/efureev/reggol v0.3.1 h1:iFsMTZ5PhEynWCW0Mh1ZNbwnDvr9VGXC+axeekiTtYU=
-github.com/efureev/reggol v0.3.1/go.mod h1:R4mEkeWgXKcuYX8pyfcBwNtFTIyd9Kb0HTrCiIXR+PA=
+github.com/efureev/reggol v0.4.0 h1:9Jgbq9kJU6hGNsDPow1fryHAve1p6888olJZ5FUlE4A=
+github.com/efureev/reggol v0.4.0/go.mod h1:073C84kyjzudJAF2sS5nqm0p2mUGmYkVP42kElGbx1Y=
 golang.org/x/sys v0.38.0 h1:3yZWxaJjBmCWXqhN1qh02AkOnCQ1poK6oF+a7xWL6Gc=
 golang.org/x/sys v0.38.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
