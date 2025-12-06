@@ -81,12 +81,28 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []CommandCha
 	return nil
 }
 
-// executeChain выполняет команды одной цепочки последовательно.
+// executeChain выполняет команды одной цепочки с учетом pipe-флага:
+//   - pipe=false — выполняются последовательно (синхронно)
+//   - pipe=true  — запускаются в горутинах и выполняются параллельно, но в рамках цепочки
+//     завершение цепочки ожидает окончания всех запущенных pipe-команд
 func (c *chainExecutor) executeChain(ctx context.Context, chain CommandChain) error {
+	var (
+		wg       sync.WaitGroup
+		firstErr error
+	)
+
+	errCh := make(chan error, len(chain.commands))
+	breakLoop := false
+
 	for _, cmd := range chain.commands {
+		if breakLoop {
+			break
+		}
+
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			firstErr = ctx.Err()
+			breakLoop = true
 		default:
 			if cmd.Disable {
 				c.lgr.Info().Msg(fmt.Sprintf("Command is disabled, skipping: chain=%s command=%s", chain.Name, cmd.getName()))
@@ -94,17 +110,41 @@ func (c *chainExecutor) executeChain(ctx context.Context, chain CommandChain) er
 				continue
 			}
 
-			var err error
-			if cmd.Pipe {
-				err = c.runner.ExecuteWithPipe(ctx, cmd)
-			} else {
-				err = c.runner.Execute(ctx, cmd)
-			}
+			if cmd.Pipe { // Параллельный запуск
+				wg.Add(1)
 
-			if err != nil {
-				return err
+				go func(cm Command) {
+					defer wg.Done()
+
+					if err := c.runner.ExecuteWithPipe(ctx, cm); err != nil && !errors.Is(err, context.Canceled) {
+						errCh <- err
+					}
+				}(cmd)
+			} else { // Последовательный запуск
+				if err := c.runner.Execute(ctx, cmd); err != nil {
+					firstErr = err
+					breakLoop = true
+				}
 			}
 		}
+	}
+
+	// Ожидаем завершения всех запущенных pipe-команд
+	wg.Wait()
+	close(errCh)
+
+	if firstErr != nil && !errors.Is(firstErr, context.Canceled) {
+		return firstErr
+	}
+
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+
+	if firstErr != nil {
+		return firstErr
 	}
 
 	return nil

@@ -109,6 +109,8 @@ func (m *manager) Execute(ctx context.Context, command Command) error {
 		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
 	}
 
+	m.lgr.Info().Msg(fmt.Sprintf("Command started: %s", nameReplace(command)))
+
 	// Регистрируем команду для корректного shutdown
 	cmdKey := fmt.Sprintf("%s_%d", command.Cmd, cmd.Process.Pid)
 
@@ -188,6 +190,8 @@ func (m *manager) ExecuteWithPipe(ctx context.Context, command Command) error {
 
 		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
 	}
+
+	m.lgr.Info().Msg(fmt.Sprintf("Command started: %s", nameReplace(command)))
 
 	// Регистрируем команду для отслеживания
 	cmdKey := fmt.Sprintf("%s_%d", command.Cmd, cmd.Process.Pid)

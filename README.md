@@ -6,7 +6,8 @@
 A small CLI to run multiple console commands in parallel with readable, colored output. Useful for local development when you need to run several services/tools at once (web server, queues, bundlers, watchers, etc.).
 
 Highlights:
-- Parallel execution of independent chains; sequential execution inside each chain
+- Parallel execution of independent chains
+- Inside a chain: non‑piped commands run sequentially; `pipe: true` commands run concurrently within the same chain
 - Human‑friendly colored logs per chain with optional streaming (`pipe`)
 - Graceful shutdown: forwards the original OS signal to the whole process group and waits
 - YAML configuration, Docker helpers, name formatting
@@ -92,7 +93,8 @@ commands: # list of parallel command chains
 
 ### Fields
 
-- `pipe: true` — stream output live. If `false`/missing, the output is printed as a block after the command finishes.
+- `pipe: true` — stream output live and start the command concurrently within its chain. The chain will wait for all piped commands to finish before completing.
+- `pipe: false` (or missing) — run sequentially, respecting the order in the chain. Output is printed as a block after the command finishes.
 - `cmd: ['bin', 'arg1', ...]` — regular command and its args.
 - `dir: 'path'` — working directory for the command.
 - `disable: true` — disable a command without removing it from config. Disabled commands are shown in the flow preview and are skipped during execution. Default: `false`.
@@ -102,7 +104,7 @@ commands: # list of parallel command chains
 
 ### Docker mode
 
-When `docker` section is used, the tool builds the final `docker` command for you, adds `--rm` by default (unless `removeAfterAll: false`), applies `pull` policy and ports, and always runs with `pipe: true` for live logs.
+When `docker` section is used, the tool builds the final `docker` command for you, adds `--rm` by default (unless `removeAfterAll: false`), applies `pull` policy and ports, and always runs with `pipe: true` for live logs. Because of this, Docker commands start concurrently and the chain waits for them to finish.
 
 Example of disabling commands (works for both regular and docker forms):
 
@@ -125,9 +127,29 @@ commands:
 ## How it runs
 
 - Parallel starts each chain concurrently.
-- Commands inside a chain are executed sequentially, respecting order.
+- Inside a chain:
+  - Commands with `pipe: false` are executed sequentially, in order.
+  - Commands with `pipe: true` start immediately and run concurrently with others in the same chain; the chain completes only after all piped commands finish.
+  - If a non‑piped command fails, subsequent commands in that chain are not started; already running piped commands are awaited.
 - For `pipe: true`, stdout/stderr are streamed and colorized per chain.
 - For non‑pipe commands, output is shown as a formatted block after completion.
+
+Example of mixing piped and non‑piped commands in one chain:
+
+```yaml
+commands:
+  api:
+    migrate:
+      cmd: ['go', 'run', './cmd/migrate'] # runs sequentially while long-runner keeps streaming
+
+    long-runner:
+      pipe: true
+      cmd: ['go', 'run', './cmd/api']
+
+    health-check:
+      pipe: true                          # starts concurrently; chain will wait for it at the end
+      cmd: ['curl', '-s', 'http://localhost:8080/health']
+```
 
 ## Graceful shutdown
 
