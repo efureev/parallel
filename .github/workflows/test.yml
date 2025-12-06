@@ -11,35 +11,35 @@ jobs:
     name: GitLeaks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with: { fetch-depth: 0 }
 
       - uses: gacts/gitleaks@v1 # Action page: <https://github.com/gacts/gitleaks>
 
-#  lint:
-#    name: Golang-CI (lint)
-#    runs-on: ubuntu-latest
-#    steps:
-#      - uses: actions/checkout@v4
-#      - uses: actions/setup-go@v5
-#        with:
-#          go-version-file: 'go.mod'
-#      - uses: golangci/golangci-lint-action@v4 # Action page: <https://github.com/golangci/golangci-lint-action>
-#        with: { skip-pkg-cache: true, skip-build-cache: true }
+  lint:
+    name: Golang-CI (lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+      - uses: golangci/golangci-lint-action@v9 # Action page: <https://github.com/golangci/golangci-lint-action>
+        with: { version: v2.7 }
 
   test:
     strategy:
       matrix:
-        go-version: [1.24.x]
+        go-version: [1.24.x, 1.25.x]
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Install Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: ${{ matrix.go-version }}
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - uses: actions/cache@v4
         with:
           path: ~/go/pkg/mod
@@ -48,6 +48,7 @@ jobs:
             ${{ runner.os }}-go-
       - name: Test
         run: go test -v -race ./...
+
   coverage:
     runs-on: ubuntu-latest
     permissions:
