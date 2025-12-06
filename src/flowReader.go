@@ -57,6 +57,10 @@ func (f *FlowReader) Out(flow *Flow) {
 				b.WriteString("        Pipe : true\n")
 			}
 
+			if cmd.Disable {
+				b.WriteString("        Disabled : true\n")
+			}
+
 			if cmd.Format.CmdName != "" {
 				b.WriteString(fmt.Sprintf("        Name : %s\n", cmd.Format.CmdName))
 			}

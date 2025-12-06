@@ -95,6 +95,7 @@ commands: # list of parallel command chains
 - `pipe: true` — stream output live. If `false`/missing, the output is printed as a block after the command finishes.
 - `cmd: ['bin', 'arg1', ...]` — regular command and its args.
 - `dir: 'path'` — working directory for the command.
+- `disable: true` — disable a command without removing it from config. Disabled commands are shown in the flow preview and are skipped during execution. Default: `false`.
 - `format.cmdName` — display name template. Supports placeholders:
   - `%CMD_NAME%` — command name (either `Name` or `Cmd`)
   - `%CMD_ARGS%` — arguments joined by space
@@ -102,6 +103,24 @@ commands: # list of parallel command chains
 ### Docker mode
 
 When `docker` section is used, the tool builds the final `docker` command for you, adds `--rm` by default (unless `removeAfterAll: false`), applies `pull` policy and ports, and always runs with `pipe: true` for live logs.
+
+Example of disabling commands (works for both regular and docker forms):
+
+```yaml
+commands:
+  api:
+    serve:
+      pipe: true
+      disable: true           # will be listed but not executed
+      cmd: ['go', 'run', './cmd/api']
+
+  docker-services:
+    nginx:
+      disable: true           # will be skipped
+      docker:
+        image:
+          name: nginx
+```
 
 ## How it runs
 

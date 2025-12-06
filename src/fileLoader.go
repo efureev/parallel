@@ -27,11 +27,12 @@ type dockerCommand struct {
 }
 
 type command struct {
-	Cmd    []string
-	Docker *dockerCommand
-	Dir    string
-	Pipe   bool
-	Format format
+	Cmd     []string
+	Docker  *dockerCommand
+	Dir     string
+	Pipe    bool
+	Disable bool `yaml:"disable"`
+	Format  format
 }
 
 type ConfigData = map[string]CommandChainData

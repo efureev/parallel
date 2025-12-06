@@ -83,22 +83,36 @@ func (b *FlowBuilder) createDockerCommand(cmdName string, cmdRaw command) Comman
 	args = append(args, imageName)
 
 	return Command{
-		Name:   cmdName,
-		Cmd:    `docker`,
-		Args:   args,
-		Dir:    cmdRaw.Dir,
-		Pipe:   true,
-		Format: Format{CmdName: cmdRaw.Format.CmdName},
+		Name:    cmdName,
+		Cmd:     `docker`,
+		Args:    args,
+		Dir:     cmdRaw.Dir,
+		Pipe:    true,
+		Disable: cmdRaw.Disable,
+		Format:  Format{CmdName: cmdRaw.Format.CmdName},
 	}
 }
 
 func (b *FlowBuilder) createRegularCommand(cmdName string, cmdRaw command) Command {
+	var (
+		cmdStr string
+		args   []string
+	)
+
+	if len(cmdRaw.Cmd) > 0 {
+		cmdStr = cmdRaw.Cmd[0]
+		if len(cmdRaw.Cmd) > 1 {
+			args = cmdRaw.Cmd[1:]
+		}
+	}
+
 	return Command{
-		Name:   cmdName,
-		Cmd:    cmdRaw.Cmd[0],
-		Args:   cmdRaw.Cmd[1:],
-		Dir:    cmdRaw.Dir,
-		Pipe:   cmdRaw.Pipe,
-		Format: Format{CmdName: cmdRaw.Format.CmdName},
+		Name:    cmdName,
+		Cmd:     cmdStr,
+		Args:    args,
+		Dir:     cmdRaw.Dir,
+		Pipe:    cmdRaw.Pipe,
+		Disable: cmdRaw.Disable,
+		Format:  Format{CmdName: cmdRaw.Format.CmdName},
 	}
 }

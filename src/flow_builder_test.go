@@ -67,3 +67,45 @@ func TestFlowBuilder_BuildRegularAndDocker(t *testing.T) {
 		t.Fatalf("expected to find both echo and docker commands, echo=%v docker=%v", foundEcho, foundDocker)
 	}
 }
+
+func TestFlowBuilder_DisablePropagationAndDefault(t *testing.T) {
+	b := NewFlowBuilder(Logger())
+
+	data := ConfigData{
+		"commands": CommandChainData{
+			"c1": {
+				"enabled":  {Cmd: []string{"echo", "ok"}},
+				"disabled": {Cmd: []string{"echo", "no"}, Disable: true},
+			},
+			"dock": {
+				"ng": {Docker: &dockerCommand{Image: struct {
+					Name string `yaml:"name"`
+					Tag  string `yaml:"tag"`
+					Pull string `yaml:"pull"`
+				}{Name: "nginx"}}, Disable: true},
+			},
+		},
+	}
+
+	flow := b.Build(data)
+
+	// helper map by command Name
+	states := map[string]bool{}
+	for _, ch := range flow.Chains {
+		for _, c := range ch.commands {
+			states[c.Name] = c.Disable
+		}
+	}
+
+	if got := states["enabled"]; got {
+		t.Fatalf("expected enabled command to have Disable=false, got true")
+	}
+
+	if got := states["disabled"]; !got {
+		t.Fatalf("expected disabled command to have Disable=true, got false")
+	}
+
+	if got := states["ng"]; !got {
+		t.Fatalf("expected docker command 'ng' to have Disable=true, got false")
+	}
+}

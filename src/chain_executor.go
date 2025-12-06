@@ -3,6 +3,7 @@ package parallel
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/efureev/reggol"
@@ -87,6 +88,12 @@ func (c *chainExecutor) executeChain(ctx context.Context, chain CommandChain) er
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
+			if cmd.Disable {
+				c.lgr.Info().Msg(fmt.Sprintf("Command is disabled, skipping: chain=%s command=%s", chain.Name, cmd.getName()))
+
+				continue
+			}
+
 			var err error
 			if cmd.Pipe {
 				err = c.runner.ExecuteWithPipe(ctx, cmd)

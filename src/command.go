@@ -7,13 +7,14 @@ type Format struct {
 }
 
 type Command struct {
-	Name   string
-	Cmd    string
-	Args   []string
-	Dir    string
-	Pipe   bool
-	Format Format
-	parent CommandParent
+	Name    string
+	Cmd     string
+	Args    []string
+	Dir     string
+	Pipe    bool
+	Disable bool
+	Format  Format
+	parent  CommandParent
 }
 
 func NewCommand(cmd string, args ...string) *Command {

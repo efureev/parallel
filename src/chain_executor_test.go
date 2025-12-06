@@ -73,3 +73,23 @@ func TestChainExecutor_CancelContextStopsExecution(t *testing.T) {
 		t.Fatalf("expected 0 executed commands on canceled context, got %d", c)
 	}
 }
+
+func TestChainExecutor_SkipsDisabledCommands(t *testing.T) {
+	lgr := Logger()
+	runner := &fakeRunner{}
+
+	exec := newChainExecutor(lgr, runner, nil)
+
+	chain := CommandChain{Name: "c1"}
+	chain.Add(Command{Name: "will-skip", Cmd: "echo", Disable: true})
+	chain.Add(Command{Name: "will-run", Cmd: "echo"})
+
+	ctx := context.Background()
+	if err := exec.ExecuteParallel(ctx, []CommandChain{chain}); err != nil {
+		t.Fatalf("ExecuteParallel returned error: %v", err)
+	}
+
+	if c := atomic.LoadInt32(&runner.count); c != 1 {
+		t.Fatalf("expected only 1 executed command (disabled skipped), got %d", c)
+	}
+}
