@@ -109,10 +109,10 @@ func (m *manager) Execute(ctx context.Context, command Command) error {
 		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
 	}
 
-	m.lgr.Info().Msg(fmt.Sprintf("Command started: %s", nameReplace(command)))
+	m.lgr.Info().Msg(fmt.Sprintf("Command started: %s", fullDisplayName(command)))
 
 	// Регистрируем команду для корректного shutdown
-	cmdKey := fmt.Sprintf("%s_%d", command.Cmd, cmd.Process.Pid)
+	cmdKey := uniqueCmdKey(command, cmd.Process.Pid)
 
 	m.procs.add(cmdKey, cmd)
 	defer m.procs.remove(cmdKey)
@@ -191,10 +191,10 @@ func (m *manager) ExecuteWithPipe(ctx context.Context, command Command) error {
 		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
 	}
 
-	m.lgr.Info().Msg(fmt.Sprintf("Command started: %s", nameReplace(command)))
+	m.lgr.Info().Msg(fmt.Sprintf("Command started: %s", fullDisplayName(command)))
 
 	// Регистрируем команду для отслеживания
-	cmdKey := fmt.Sprintf("%s_%d", command.Cmd, cmd.Process.Pid)
+	cmdKey := uniqueCmdKey(command, cmd.Process.Pid)
 
 	m.procs.add(cmdKey, cmd)
 	defer m.procs.remove(cmdKey)
@@ -315,6 +315,30 @@ func nameReplace(cmd Command) string {
 	}
 
 	return result
+}
+
+// fullDisplayName returns a human-friendly display string with chain name
+// included when available, e.g. "CHAIN > echo hello".
+func fullDisplayName(cmd Command) string {
+	chain := cmd.GetChainName()
+	if chain == "" {
+		return nameReplace(cmd)
+	}
+
+	return fmt.Sprintf("%s > %s", chain, nameReplace(cmd))
+}
+
+// uniqueCmdKey builds a unique key for the process registry that includes
+// the chain and command names along with the PID to avoid collisions.
+func uniqueCmdKey(cmd Command, pid int) string {
+	base := cmd.getName()
+
+	chain := cmd.GetChainName()
+	if chain != "" {
+		base = chain + "/" + base
+	}
+
+	return fmt.Sprintf("%s_%d", base, pid)
 }
 
 func setupPipes(cmd *exec.Cmd) (stdout io.ReadCloser, stderr io.ReadCloser, err error) {

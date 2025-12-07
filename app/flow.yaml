@@ -41,9 +41,9 @@ commands:
 #      pipe: true
 #      format: { cmdName: '%CMD_NAME%' }
 
-#  yarn:
-#    ls:
-#      cmd: [ 'ls', '-la' ]
+  yarn:
+    ls:
+      cmd: [ 'ls', '-la' ]
 #    install:
 #      pipe: true
 #      cmd: [ 'yarn', 'install' ]
@@ -59,8 +59,7 @@ commands:
   #      format:
   #        cmdName: '%CMD_NAME% %CMD_ARGS%'
   #        cmdName: '%CMD_NAME%'
-#  net:
-#    ping:
-#      pipe: true
-#      cmd: [ 'ping', '-c', '10','ya.ru' ]
-#
+  net:
+    ping:
+      pipe: true
+      cmd: [ 'ping', '-c', '10','ya.ru' ]
