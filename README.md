@@ -4,9 +4,11 @@
 [![Test](https://github.com/efureev/parallel/actions/workflows/test.yml/badge.svg)](https://github.com/efureev/parallel/actions/workflows/test.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/efureev/parallel)](https://goreportcard.com/report/github.com/efureev/parallel)
 
-A small CLI to run multiple console commands in parallel with readable, colored output. Useful for local development when you need to run several services/tools at once (web server, queues, bundlers, watchers, etc.).
+A small CLI to run multiple console commands in parallel with readable, colored output. Useful for local development
+when you need to run several services/tools at once (web server, queues, bundlers, watchers, etc.).
 
 Highlights:
+
 - Parallel execution of independent chains
 - Inside a chain: non‑piped commands run sequentially; `pipe: true` commands run concurrently within the same chain
 - Human‑friendly colored logs per chain with optional streaming (`pipe`)
@@ -39,8 +41,10 @@ If the configuration file is located elsewhere:
 parallel -f /path/to/config/flow.yaml
 ```
 
-Only one flag is supported currently:
+Flags are supported currently:
+
 - `-f` — path to YAML config (defaults to `.parallelrc.yaml`)
+- `-v` — version info
 
 ## Screenshots
 
@@ -50,62 +54,68 @@ Only one flag is supported currently:
 
 ## Configuration (YAML)
 
-Top‑level key: `commands`. It maps chain names to command sets. Each command can be a regular OS command or a Docker recipe.
+Top‑level key: `commands`. It maps chain names to command sets. Each command can be a regular OS command or a Docker
+recipe.
 
 ```yaml
 commands: # list of parallel command chains
-  php-server:                    # chain name
-    artisan:                     # command key inside the chain
+  php-server: # chain name
+    artisan: # command key inside the chain
       pipe: true                 # stream stdout/stderr
-      cmd: ['php', 'artisan', 'serve', '--port', '8010']
+      cmd: [ 'php', 'artisan', 'serve', '--port', '8010' ]
       dir: 'app'                 # working directory
 
   web-services:
     nginx-cmd:
       pipe: true
-      cmd: ['docker', 'container', 'run', '--rm', '-p', '8090:80', '--name', 'nginx', 'nginx']
+      cmd: [ 'docker', 'container', 'run', '--rm', '-p', '8090:80', '--name', 'nginx', 'nginx' ]
       format:
         cmdName: '%CMD_NAME% %CMD_ARGS%'
 
-  docker-services:               # Docker shorthand mode
+  docker-services: # Docker shorthand mode
     nginx-docker:
       docker:
         image:
           name: 'nginx'
           # tag: 'v1'            # default: 'latest'
           # pull: 'always'       # default: none
-        ports: ['127.0.0.1:80:8080', '127.0.0.1:443:8443']
+        ports: [ '127.0.0.1:80:8080', '127.0.0.1:443:8443' ]
         # removeAfterAll: false  # default: true
         # cmd: 'exec'            # default: 'run'
 
   frontend:
     list-files:
-      cmd: ['ls', '-la']         # executed without pipe
+      cmd: [ 'ls', '-la' ]         # executed without pipe
     yarn-dev:
       pipe: true
-      cmd: ['yarn', 'dev']
+      cmd: [ 'yarn', 'dev' ]
       dir: 'app'
 
   network:
     ping-test:
       pipe: true
-      cmd: ['ping', '-c', '3', 'ya.ru']
+      cmd: [ 'ping', '-c', '3', 'ya.ru' ]
 ```
 
 ### Fields
 
-- `pipe: true` — stream output live and start the command concurrently within its chain. The chain will wait for all piped commands to finish before completing.
-- `pipe: false` (or missing) — run sequentially, respecting the order in the chain. Output is printed as a block after the command finishes.
+- `pipe: true` — stream output live and start the command concurrently within its chain. The chain will wait for all
+  piped commands to finish before completing.
+- `pipe: false` (or missing) — run sequentially, respecting the order in the chain. Output is printed as a block after
+  the command finishes.
 - `cmd: ['bin', 'arg1', ...]` — regular command and its args.
 - `dir: 'path'` — working directory for the command.
-- `disable: true` — disable a command without removing it from config. Disabled commands are shown in the flow preview and are skipped during execution. Default: `false`.
+- `disable: true` — disable a command without removing it from config. Disabled commands are shown in the flow preview
+  and are skipped during execution. Default: `false`.
 - `format.cmdName` — display name template. Supports placeholders:
-  - `%CMD_NAME%` — command name (either `Name` or `Cmd`)
-  - `%CMD_ARGS%` — arguments joined by space
+    - `%CMD_NAME%` — command name (either `Name` or `Cmd`)
+    - `%CMD_ARGS%` — arguments joined by space
 
 ### Docker mode
 
-When `docker` section is used, the tool builds the final `docker` command for you, adds `--rm` by default (unless `removeAfterAll: false`), applies `pull` policy and ports, and always runs with `pipe: true` for live logs. Because of this, Docker commands start concurrently and the chain waits for them to finish.
+When `docker` section is used, the tool builds the final `docker` command for you, adds `--rm` by default (unless
+`removeAfterAll: false`), applies `pull` policy and ports, and always runs with `pipe: true` for live logs. Because of
+this, Docker commands start concurrently and the chain waits for them to finish.
 
 Example of disabling commands (works for both regular and docker forms):
 
@@ -115,7 +125,7 @@ commands:
     serve:
       pipe: true
       disable: true           # will be listed but not executed
-      cmd: ['go', 'run', './cmd/api']
+      cmd: [ 'go', 'run', './cmd/api' ]
 
   docker-services:
     nginx:
@@ -129,9 +139,11 @@ commands:
 
 - Parallel starts each chain concurrently.
 - Inside a chain:
-  - Commands with `pipe: false` are executed sequentially, in order.
-  - Commands with `pipe: true` start immediately and run concurrently with others in the same chain; the chain completes only after all piped commands finish.
-  - If a non‑piped command fails, subsequent commands in that chain are not started; already running piped commands are awaited.
+    - Commands with `pipe: false` are executed sequentially, in order.
+    - Commands with `pipe: true` start immediately and run concurrently with others in the same chain; the chain
+      completes only after all piped commands finish.
+    - If a non‑piped command fails, subsequent commands in that chain are not started; already running piped commands
+      are awaited.
 - For `pipe: true`, stdout/stderr are streamed and colorized per chain.
 - For non‑pipe commands, output is shown as a formatted block after completion.
 
@@ -141,28 +153,32 @@ Example of mixing piped and non‑piped commands in one chain:
 commands:
   api:
     migrate:
-      cmd: ['go', 'run', './cmd/migrate'] # runs sequentially while long-runner keeps streaming
+      cmd: [ 'go', 'run', './cmd/migrate' ] # runs sequentially while long-runner keeps streaming
 
     long-runner:
       pipe: true
-      cmd: ['go', 'run', './cmd/api']
+      cmd: [ 'go', 'run', './cmd/api' ]
 
     health-check:
       pipe: true                          # starts concurrently; chain will wait for it at the end
-      cmd: ['curl', '-s', 'http://localhost:8080/health']
+      cmd: [ 'curl', '-s', 'http://localhost:8080/health' ]
 ```
 
 ## Graceful shutdown
 
-Parallel traps `SIGINT`, `SIGTERM`, `SIGQUIT` and forwards the same signal to the entire process group of each running command (`setpgid` + group signal). Then it waits for completion up to a short timeout and only then force‑kills remaining groups.
+Parallel traps `SIGINT`, `SIGTERM`, `SIGQUIT` and forwards the same signal to the entire process group of each running
+command (`setpgid` + group signal). Then it waits for completion up to a short timeout and only then force‑kills
+remaining groups.
 
 What this means for you:
+
 - Press Ctrl+C once to stop everything gracefully.
 - Long‑running children that handle signals (e.g., `node`, `php artisan serve`, `yarn`) can clean up before exit.
 
 ## Flow preview
 
-Before execution, the tool prints a readable breakdown of your Flow (chains and commands) so you see exactly what will run. Example:
+Before execution, the tool prints a readable breakdown of your Flow (chains and commands) so you see exactly what will
+run. Example:
 
 ```
 Flow structure:
@@ -177,8 +193,8 @@ Flow structure:
 ## Typical use cases
 
 - Web + Frontend dev:
-  - Laravel/Symfony server, queue workers, plus `yarn dev`
-  - Vite/webpack dev server together with API
+    - Laravel/Symfony server, queue workers, plus `yarn dev`
+    - Vite/webpack dev server together with API
 - Micro‑services demo: run several APIs + Nginx proxy in Docker
 - Background jobs: watch two queues and a scheduler simultaneously
 - Diagnostics: tail logs, run `ping`/`curl`/`watch` side by side
@@ -204,23 +220,23 @@ commands:
   api:
     serve:
       pipe: true
-      cmd: ['go', 'run', './cmd/api']
+      cmd: [ 'go', 'run', './cmd/api' ]
   ui:
     dev:
       pipe: true
-      cmd: ['yarn', 'dev']
+      cmd: [ 'yarn', 'dev' ]
       dir: 'web'
 ```
 
 ## Troubleshooting
 
 - Command exits immediately with no output
-  - Check `cmd` and arguments; make sure the binary exists in `PATH`
-  - Verify `dir` points to a valid folder
+    - Check `cmd` and arguments; make sure the binary exists in `PATH`
+    - Verify `dir` points to a valid folder
 - Docker command keeps running after Ctrl+C
-  - The tool sends signal to the process group; ensure your containerized process handles `SIGTERM` and stops promptly
+    - The tool sends signal to the process group; ensure your containerized process handles `SIGTERM` and stops promptly
 - YAML error: “invalid flow configuration”
-  - The tool validates that each chain has at least one command and each command has a non‑empty `cmd`
+    - The tool validates that each chain has at least one command and each command has a non‑empty `cmd`
 
 ## Development
 
@@ -231,6 +247,7 @@ go test ./...
 ```
 
 The project structure is split into clear layers:
+
 - file loading (`fileLoader.go`) → raw YAML
 - flow building (`flowBuilder.go`) → domain model (`Flow`)
 - validation (`Flow.Validate`)
@@ -245,4 +262,5 @@ MIT
 
 Русский кратко
 
-Parallel — утилита для параллельного запуска нескольких команд с читаемым цветным выводом и корректным завершением. Конфигурация — YAML, запуск: `parallel -f app/flow.yaml`. См. примеры выше и `app/flow.yaml`.
+Parallel — утилита для параллельного запуска нескольких команд с читаемым цветным выводом и корректным завершением.
+Конфигурация — YAML, запуск: `parallel -f app/flow.yaml`. См. примеры выше и `app/flow.yaml`.

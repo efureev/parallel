@@ -124,6 +124,13 @@ func main() {
 		log.Fatalf("Failed to parse flags: %v", err)
 	}
 
+	// Handle version request early and exit.
+	if flags.VersionRequested {
+		log.Print(parallel.VersionLong())
+
+		return
+	}
+
 	ctx, cancel, sigCh := setupSignalContext()
 	defer cancel()
 
