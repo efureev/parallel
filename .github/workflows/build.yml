@@ -1,0 +1,98 @@
+name: Build binaries
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: ${{ github.ref }}-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ matrix.goos }} ${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-latest
+            suffix: linux.x64
+          - goos: darwin
+            goarch: amd64
+            runner: macos-latest
+            suffix: darwin.x64
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Compute version metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          if [[ ! "$VERSION" =~ ^v ]]; then
+            # Use git describe or default to dev
+            if v=$(git describe --tags --always --dirty 2>/dev/null); then
+              VERSION="$v"
+            else
+              VERSION="dev"
+            fi
+          fi
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
+          echo "date=$DATE" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          set -euo pipefail
+          APP=parallel
+          LD_FLAGS="-s -w \
+            -X github.com/efureev/parallel/src.Version=${{ steps.meta.outputs.version }} \
+            -X github.com/efureev/parallel/src.Commit=${{ steps.meta.outputs.commit }} \
+            -X github.com/efureev/parallel/src.Date=${{ steps.meta.outputs.date }} \
+            -X github.com/efureev/parallel/src.BuiltBy=github-actions"
+          mkdir -p build
+          OUT="build/${APP}.${{ matrix.suffix }}"
+          go build -trimpath -ldflags "$LD_FLAGS" -o "$OUT" ./
+          echo "OUT=$OUT" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallel-${{ steps.meta.outputs.version }}-${{ matrix.suffix }}
+          path: ${{ env.OUT }}
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/**/parallel.*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

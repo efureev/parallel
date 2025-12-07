@@ -4,10 +4,18 @@
 # Build configuration constants
 readonly APP_NAME="parallel"
 readonly BUILD_DIR=${BUILD_PATH:-"build"}
-readonly TARGET_OS="darwin"
-readonly TARGET_ARCH="amd64"
+readonly TARGET_OS=${GOOS:-"darwin"}
+readonly TARGET_ARCH=${GOARCH:-"amd64"}
 readonly MAPPED_ARCH="x64"
-readonly CGO_SETTING=0
+readonly CGO_SETTING=${CGO_ENABLED:-0}
+
+# Version metadata (can be overridden via environment)
+VERSION=${VERSION:-"dev"}
+COMMIT=${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "local")}
+DATE=${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
+BUILT_BY=${BUILT_BY:-"local"}
+
+LD_FLAGS="-s -w -X github.com/efureev/parallel/src.Version=${VERSION} -X github.com/efureev/parallel/src.Commit=${COMMIT} -X github.com/efureev/parallel/src.Date=${DATE} -X github.com/efureev/parallel/src.BuiltBy=${BUILT_BY}"
 
 print_build_info() {
     echo "Building options"
@@ -28,7 +36,7 @@ build_executable() {
     CGO_ENABLED=$CGO_SETTING \
     GOOS=$TARGET_OS \
     GOARCH=$TARGET_ARCH \
-        go build -a -installsuffix cgo -o "$BUILD_DIR/$executable_name"
+        go build -trimpath -ldflags "$LD_FLAGS" -o "$BUILD_DIR/$executable_name" ./
 }
 
 main() {

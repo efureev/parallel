@@ -13,7 +13,8 @@ const (
 
 // Config holds the application configuration parameters parsed from command line flags.
 type Config struct {
-	ConfigFilePath string
+	ConfigFilePath   string
+	VersionRequested bool
 }
 
 // Option defines a functional option for configuring flag parsing.
@@ -26,13 +27,27 @@ func ParseFlags(opts ...Option) (*Config, error) {
 
 	var cfg Config
 	fs.StringVar(&cfg.ConfigFilePath, "f", defaultConfigPath, "Path to YAML configuration file")
+	// Support both -v and -version flags
+	fs.BoolVar(&cfg.VersionRequested, "v", false, "Show version information and exit")
+	fs.BoolVar(&cfg.VersionRequested, "version", false, "Show version information and exit")
 
 	// Apply any custom options
 	for _, opt := range opts {
 		opt(fs)
 	}
 
-	if err := fs.Parse(os.Args[1:]); err != nil {
+	// Preprocess os.Args to support GNU-style --version alias
+	// The standard flag package does not recognize double-dash long booleans by default.
+	args := make([]string, 0, len(os.Args)-1)
+	for _, a := range os.Args[1:] {
+		if a == "--version" {
+			a = "-version"
+		}
+
+		args = append(args, a)
+	}
+
+	if err := fs.Parse(args); err != nil {
 		return nil, fmt.Errorf("parsing flags: %w", err)
 	}
 
