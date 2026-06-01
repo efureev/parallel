@@ -26,7 +26,8 @@ func TestManager_ExecuteRespectsContextCancel(t *testing.T) {
 		t.Fatalf("unexpected manager type: %T", ce)
 	}
 
-	cmd := Command{Cmd: "sleep", Args: []string{"5"}}
+	name, args := sleepCmdNameArgs(5)
+	cmd := Command{Cmd: name, Args: args}
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 

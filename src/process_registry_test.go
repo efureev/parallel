@@ -10,8 +10,9 @@ import (
 // helper to create and start a simple long-running command.
 func startSleepCmd(t *testing.T) *exec.Cmd {
 	t.Helper()
-	cmd := exec.Command("sleep", "5")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	name, args := sleepCmdNameArgs(5)
+	cmd := exec.Command(name, args...)
+	configureProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start sleep command: %v", err)
 	}

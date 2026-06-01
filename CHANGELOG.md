@@ -23,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fixed `PathExists`.** Now returns `err == nil` instead of the masking
   `|| !os.IsNotExist(err)`, which previously reported `true` on errors such as
   permission denied.
+- **Fixed Windows test build.** Tests no longer reference the Unix-only
+  `syscall.SysProcAttr{Setpgid}` field directly (which broke compilation on Windows);
+  they now use the cross-platform `configureProcessGroup` helper. A new
+  per-OS test helper `sleepCmdNameArgs` provides a portable long-running command
+  (`sleep` on Unix, `ping -n` on Windows), so process/registry tests build and run on
+  the `windows-latest` runner.
 - **Interruptible output reading.** `handleOutput` no longer blocks on
   `reader.ReadString('\n')` for a silent process: reading runs in a goroutine while
   the main loop selects between new lines, a read error, and context cancellation, so
