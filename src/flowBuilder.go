@@ -32,7 +32,7 @@ func (b *FlowBuilder) Build(data ConfigData) Flow {
 			colorList = GenColors(true)
 		}
 
-		chain := CommandChain{
+		chain := &CommandChain{
 			Name:  chainCfg.Name,
 			Color: currentColor,
 		}

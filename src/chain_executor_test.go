@@ -40,7 +40,7 @@ func TestChainExecutor_ExecuteParallel(t *testing.T) {
 	chain2.Add(Command{Cmd: "echo", Pipe: true})
 
 	ctx := context.Background()
-	if err := exec.ExecuteParallel(ctx, []CommandChain{chain1, chain2}); err != nil {
+	if err := exec.ExecuteParallel(ctx, []*CommandChain{&chain1, &chain2}); err != nil {
 		t.Fatalf("ExecuteParallel returned error: %v", err)
 	}
 
@@ -68,7 +68,7 @@ func TestChainExecutor_CancelContextStopsExecution(t *testing.T) {
 	// ExecuteParallel при немедленной отмене контекста может вернуть nil,
 	// важнее, что не запускаются команды. Вызов stopAll происходит асинхронно
 	// и не гарантированно завершится к моменту возврата, поэтому его не проверяем жёстко.
-	_ = exec.ExecuteParallel(ctx, []CommandChain{chain})
+	_ = exec.ExecuteParallel(ctx, []*CommandChain{&chain})
 
 	if c := atomic.LoadInt32(&runner.count); c != 0 {
 		t.Fatalf("expected 0 executed commands on canceled context, got %d", c)
@@ -86,7 +86,7 @@ func TestChainExecutor_SkipsDisabledCommands(t *testing.T) {
 	chain.Add(Command{Name: "will-run", Cmd: "echo"})
 
 	ctx := context.Background()
-	if err := exec.ExecuteParallel(ctx, []CommandChain{chain}); err != nil {
+	if err := exec.ExecuteParallel(ctx, []*CommandChain{&chain}); err != nil {
 		t.Fatalf("ExecuteParallel returned error: %v", err)
 	}
 
@@ -158,7 +158,7 @@ func TestChainExecutor_PipeConcurrentWithinChain(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- exec.ExecuteParallel(ctx, []CommandChain{chain})
+		done <- exec.ExecuteParallel(ctx, []*CommandChain{&chain})
 	}()
 
 	// We expect the non-piped command to start even while the piped one is blocked
@@ -206,7 +206,7 @@ func TestChainExecutor_WaitsForAllPiped(t *testing.T) {
 	ctx := context.Background()
 	done := make(chan error, 1)
 	go func() {
-		done <- exec.ExecuteParallel(ctx, []CommandChain{chain})
+		done <- exec.ExecuteParallel(ctx, []*CommandChain{&chain})
 	}()
 
 	// give some time for goroutines to start

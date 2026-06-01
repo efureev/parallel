@@ -1,7 +1,6 @@
 package parallel
 
 import (
-	"errors"
 	"testing"
 )
 
@@ -10,7 +9,7 @@ const testChainName = "TestChain"
 func TestFlow_AddChain(t *testing.T) {
 	t.Run("Add single chain", func(t *testing.T) {
 		f := &Flow{}
-		chain := CommandChain{Name: testChainName}
+		chain := &CommandChain{Name: testChainName}
 		f.AddChain(chain)
 
 		if len(f.Chains) != 1 {
@@ -33,7 +32,7 @@ func TestFlow_Validate(t *testing.T) {
 			name: "Valid flow with chains",
 			setupFlow: func() *Flow {
 				f := &Flow{}
-				chain := CommandChain{Name: "ValidChain"}
+				chain := &CommandChain{Name: "ValidChain"}
 				chain.Add(Command{Cmd: "echo"})
 				f.AddChain(chain)
 
@@ -48,7 +47,7 @@ func TestFlow_Validate(t *testing.T) {
 				return &Flow{}
 			},
 			expectErr:   true,
-			expectedErr: errors.New("flow must contain at least one chain"),
+			expectedErr: ErrNoChains,
 		},
 	}
 

@@ -34,7 +34,7 @@ func newChainExecutor(lgr *reggol.Logger, runner CommandRunner, stopAll stopAllF
 }
 
 // ExecuteParallel выполняет цепочки параллельно, а команды внутри одной цепочки — последовательно.
-func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []CommandChain) error {
+func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*CommandChain) error {
 	var wg sync.WaitGroup
 	wg.Add(len(chains))
 	errCh := make(chan error, len(chains))
@@ -44,7 +44,7 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []CommandCha
 	defer chainCancel()
 
 	for _, chain := range chains {
-		go func(ch CommandChain) {
+		go func(ch *CommandChain) {
 			defer wg.Done()
 
 			if err := c.executeChain(chainCtx, ch); err != nil {
@@ -85,7 +85,7 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []CommandCha
 //   - pipe=false — выполняются последовательно (синхронно)
 //   - pipe=true  — запускаются в горутинах и выполняются параллельно, но в рамках цепочки
 //     завершение цепочки ожидает окончания всех запущенных pipe-команд
-func (c *chainExecutor) executeChain(ctx context.Context, chain CommandChain) error {
+func (c *chainExecutor) executeChain(ctx context.Context, chain *CommandChain) error {
 	var (
 		wg       sync.WaitGroup
 		firstErr error

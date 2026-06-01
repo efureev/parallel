@@ -1,6 +1,9 @@
 package parallel
 
-import "fmt"
+import "errors"
+
+// ErrEmptyCommand is returned by Command.Validate when the executable is empty.
+var ErrEmptyCommand = errors.New("command cannot be empty")
 
 type Format struct {
 	CmdName string
@@ -84,7 +87,7 @@ func (cmd *Command) getName() string {
 // Validate checks if the command is properly configured.
 func (cmd *Command) Validate() error {
 	if cmd.Cmd == "" {
-		return fmt.Errorf("command cannot be empty")
+		return ErrEmptyCommand
 	}
 
 	return nil

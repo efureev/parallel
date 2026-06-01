@@ -5,6 +5,42 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-06-01
+
+### Fixed
+
+- **Command parent now points to the stored chain.** `Flow.Chains` is now
+  `[]*CommandChain` and the builder links each command to the very chain object kept
+  in the slice (instead of a leaked by-value copy of a loop variable). This removes a
+  latent bug where mutating a chain in the slice would diverge from what its commands
+  observe via `GetChain()`.
+- **`setupPipes` preserves the original cause.** When closing the first pipe fails
+  after the second pipe could not be created, both errors are now combined with
+  `errors.Join`, so the original "failed creating stderr pipe" cause is no longer lost.
+
+### Changed
+
+- **Sentinel validation errors.** `Command.Validate` / `Flow.Validate` now return
+  dedicated sentinel errors (`ErrEmptyCommand`, `ErrNoChains`, `ErrEmptyChainName`,
+  `ErrEmptyChain`) instead of ad-hoc `fmt.Errorf` strings, making them testable via
+  `errors.Is` and consistent with `manager`'s `ErrCommandExecution` / `ErrPipeCreation`.
+- **Unified process supervision.** The near-duplicate orchestration in `Execute` and
+  `ExecuteWithPipe` (register → wait → signal → timeout → force-kill) is extracted into
+  a shared `manager.supervise` helper with `onCancel`/`onDone` hooks; pipe output
+  goroutines are spawned via a small `streamPipes` helper using `wg.Go`. The
+  `//nolint:funlen` directives on both methods were removed.
+
+### Added
+
+- Integration tests for the command runner: `Execute`/`ExecuteWithPipe` success and
+  failure (exit codes), context cancellation, force-kill of a signal-ignoring process,
+  and end-to-end `ExecuteParallel` over a built `Flow` (including failure propagation).
+- `TestFlowBuilder_CommandParentPointsToStoredChain` validating the parent-linkage fix,
+  plus additional coverage for `FileLoader`, `FlowReader`, version strings and
+  `SetShutdownSignal`. Statement coverage of the `src` package rose to ~90%.
+
+[0.11.0]: https://github.com/efureev/parallel/releases/tag/0.11.0
+
 ## [0.10.0] - 2026-06-01
 
 ### Fixed
