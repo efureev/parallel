@@ -1,7 +1,6 @@
 package parallel
 
 import (
-	"context"
 	"os/exec"
 	"sync"
 	"syscall"
@@ -13,21 +12,31 @@ import (
 // Timeout для graceful shutdown конкретного процесса (перед принудительным Kill).
 const forceKillTimeout = 3 * time.Second
 
+// trackedProcess хранит запущенную команду вместе с каналом завершения.
+// Канал done закрывается владельцем процесса (executor) ровно один раз —
+// после единственного вызова cmd.Wait(). Это исключает повторный/конкурентный Wait.
+type trackedProcess struct {
+	cmd  *exec.Cmd
+	done <-chan struct{}
+}
+
 // processRegistry отвечает за учёт и остановку запущенных процессов.
 type processRegistry struct {
 	mu    sync.RWMutex
-	procs map[string]*exec.Cmd
+	procs map[string]*trackedProcess
 }
 
 func newProcessRegistry() *processRegistry {
-	return &processRegistry{procs: make(map[string]*exec.Cmd)}
+	return &processRegistry{procs: make(map[string]*trackedProcess)}
 }
 
-func (r *processRegistry) add(key string, cmd *exec.Cmd) {
+// add регистрирует процесс. done — канал, который закрывается владельцем процесса
+// после завершения cmd.Wait(); registry лишь дожидается его, но сам Wait не вызывает.
+func (r *processRegistry) add(key string, cmd *exec.Cmd, done <-chan struct{}) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.procs[key] = cmd
+	r.procs[key] = &trackedProcess{cmd: cmd, done: done}
 }
 
 func (r *processRegistry) remove(key string) {
@@ -38,11 +47,11 @@ func (r *processRegistry) remove(key string) {
 }
 
 // snapshot возвращает копию текущей мапы процессов для безопасной работы без удержания мьютекса.
-func (r *processRegistry) snapshot() map[string]*exec.Cmd {
+func (r *processRegistry) snapshot() map[string]*trackedProcess {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	res := make(map[string]*exec.Cmd, len(r.procs))
+	res := make(map[string]*trackedProcess, len(r.procs))
 	for k, v := range r.procs {
 		res[k] = v
 	}
@@ -63,10 +72,11 @@ func (r *processRegistry) stopAll(lgr *reggol.Logger, sig syscall.Signal) {
 	var wg sync.WaitGroup
 	wg.Add(len(cmds))
 
-	for key, cmd := range cmds {
-		go func(k string, c *exec.Cmd) {
+	for key, tp := range cmds {
+		go func(k string, p *trackedProcess) {
 			defer wg.Done()
 
+			c := p.cmd
 			if c == nil || c.Process == nil {
 				return
 			}
@@ -77,61 +87,20 @@ func (r *processRegistry) stopAll(lgr *reggol.Logger, sig syscall.Signal) {
 				lgr.Warn().Err(err).Str("cmd", k).Msg("Failed to send shutdown signal to process group")
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), forceKillTimeout)
-			defer cancel()
-
-			done := make(chan error, 1)
-
-			go func() {
-				done <- c.Wait()
-			}()
-
+			// Ждём завершения через канал владельца (без собственного Wait).
 			select {
-			case <-ctx.Done():
+			case <-time.After(forceKillTimeout):
 				lgr.Warn().Str("cmd", k).Msg("Force killing command group after timeout")
 
 				if err := killProcessGroup(c); err != nil {
 					lgr.Warn().Err(err).Str("cmd", k).Msg("Failed to kill process group")
 				}
 
-				<-done // дождаться завершения после Kill
-			case err := <-done:
-				if err != nil {
-					lgr.Warn().Err(err).Str("cmd", k).Msg("Command finished with error during shutdown")
-				}
+				<-p.done // дождаться завершения Wait() после Kill
+			case <-p.done:
 			}
-		}(key, cmd)
+		}(key, tp)
 	}
 
 	wg.Wait()
-}
-
-// sendSignalToGroup отправляет сигнал всей группе процессов команды.
-// При ошибке получения pgid сигнал отправляется только конкретному процессу.
-func sendSignalToGroup(cmd *exec.Cmd, sig syscall.Signal) error {
-	if cmd == nil || cmd.Process == nil {
-		return nil
-	}
-
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err != nil {
-		// fallback: шлём сигнал только самому процессу
-		return cmd.Process.Signal(sig)
-	}
-
-	return syscall.Kill(-pgid, sig)
-}
-
-// killProcessGroup принудительно убивает всю группу процессов команды с помощью SIGKILL.
-func killProcessGroup(cmd *exec.Cmd) error {
-	if cmd == nil || cmd.Process == nil {
-		return nil
-	}
-
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err != nil {
-		return cmd.Process.Kill()
-	}
-
-	return syscall.Kill(-pgid, syscall.SIGKILL)
 }

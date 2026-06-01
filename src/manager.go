@@ -96,12 +96,12 @@ func (m *manager) Execute(ctx context.Context, command Command) error {
 	cmd := exec.Command(command.Cmd, command.Args...)
 	cmd.Dir = command.Dir
 	cmd.Env = os.Environ()
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	configureProcessGroup(cmd)
 
-	var stdoutBuf bytes.Buffer
+	var stdoutBuf, stderrBuf bytes.Buffer
 
 	cmd.Stdout = &stdoutBuf
-	cmd.Stderr = &stdoutBuf
+	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
 		m.lgr.Err(err).Msg("Failed to start command")
@@ -111,15 +111,22 @@ func (m *manager) Execute(ctx context.Context, command Command) error {
 
 	m.lgr.Info().Msg(fmt.Sprintf("Command started: %s", fullDisplayName(command)))
 
-	// Регистрируем команду для корректного shutdown
+	// Регистрируем команду для корректного shutdown.
+	// Владельцем cmd.Wait() является именно эта функция: результат отдаётся через waitErr,
+	// а waitDone закрывается ровно один раз. Registry лишь ждёт waitDone и сам Wait не вызывает.
 	cmdKey := uniqueCmdKey(command, cmd.Process.Pid)
 
-	m.procs.add(cmdKey, cmd)
+	waitErr := make(chan error, 1)
+	waitDone := make(chan struct{})
+
+	go func() {
+		waitErr <- cmd.Wait()
+
+		close(waitDone)
+	}()
+
+	m.procs.add(cmdKey, cmd, waitDone)
 	defer m.procs.remove(cmdKey)
-
-	done := make(chan error, 1)
-
-	go func() { done <- cmd.Wait() }()
 
 	select {
 	case <-ctx.Done():
@@ -136,36 +143,57 @@ func (m *manager) Execute(ctx context.Context, command Command) error {
 			if err := killProcessGroup(cmd); err != nil {
 				m.lgr.Warn().Err(err).Str("cmd", command.Cmd).Msg("Failed to kill process group")
 			}
-		case <-done:
+
+			<-waitDone
+		case <-waitDone:
 		}
 
 		return ctx.Err()
 
-	case err := <-done:
-		if err != nil {
+	case <-waitDone:
+		if err := <-waitErr; err != nil {
 			m.lgr.Err(err).Push()
 
 			return fmt.Errorf("%w: %w", ErrCommandExecution, err)
 		}
 	}
 
-	stdout := stdoutBuf.Bytes()
+	m.printBlock(command, stdoutBuf.Bytes(), stderrBuf.Bytes())
 
+	return nil
+}
+
+// printBlock печатает результат не-pipe команды, сохраняя разделение потоков:
+// stdout выводится обычным блоком, непустой stderr — отдельным блоком ошибки.
+func (m *manager) printBlock(command Command, stdout, stderr []byte) {
 	output := m.output.formatChainInfo(command)
-	lines := strings.Split(string(stdout), newlineChar)
+
+	var chainHeader string
+	if chain := command.GetChain(); chain != nil {
+		chainHeader = chain.Color.Wrap(output.chainName + dividerSymbol)
+	} else {
+		chainHeader = output.chainName + dividerSymbol
+	}
+
+	if len(stdout) > 0 {
+		m.lgr.Log().Blocks(chainHeader, output.cmdName, indentBlock(stdout)).Push()
+	}
+
+	if len(stderr) > 0 {
+		m.lgr.Err(errors.New(indentBlock(stderr))).Blocks(chainHeader, output.cmdName).Push()
+	}
+}
+
+// indentBlock форматирует многострочный вывод с отступом для читаемости.
+func indentBlock(b []byte) string {
+	lines := strings.Split(string(b), newlineChar)
 	content := newlineChar
 
 	for _, msg := range lines {
 		content += outputIndentation + msg + newlineChar
 	}
 
-	m.lgr.Log().Blocks(
-		command.GetChain().Color.Wrap(output.chainName+dividerSymbol),
-		output.cmdName,
-		content,
-	).Push()
-
-	return nil
+	return content
 }
 
 //nolint:funlen // function orchestrates IO, signals, and waits; splitting would hurt readability here
@@ -176,7 +204,7 @@ func (m *manager) ExecuteWithPipe(ctx context.Context, command Command) error {
 	cmd.Env = os.Environ()
 
 	// Настраиваем process group для правильной передачи сигналов
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	configureProcessGroup(cmd)
 
 	stdout, stderr, err := setupPipes(cmd)
 	if err != nil {
@@ -193,10 +221,14 @@ func (m *manager) ExecuteWithPipe(ctx context.Context, command Command) error {
 
 	m.lgr.Info().Msg(fmt.Sprintf("Command started: %s", fullDisplayName(command)))
 
-	// Регистрируем команду для отслеживания
+	// Регистрируем команду для отслеживания.
+	// Владельцем cmd.Wait() является эта функция; registry получает только waitDone.
 	cmdKey := uniqueCmdKey(command, cmd.Process.Pid)
 
-	m.procs.add(cmdKey, cmd)
+	waitErr := make(chan error, 1)
+	waitDone := make(chan struct{})
+
+	m.procs.add(cmdKey, cmd, waitDone)
 	defer m.procs.remove(cmdKey)
 
 	var wg sync.WaitGroup
@@ -234,11 +266,12 @@ func (m *manager) ExecuteWithPipe(ctx context.Context, command Command) error {
 		}
 	}()
 
-	// Ждем завершения команды или отмены контекста
-	done := make(chan error, 1)
-
+	// Ждем завершения команды или отмены контекста.
+	// Wait запускается после старта чтения вывода, чтобы корректно дочитать пайпы.
 	go func() {
-		done <- cmd.Wait()
+		waitErr <- cmd.Wait()
+
+		close(waitDone)
 	}()
 
 	select {
@@ -256,7 +289,7 @@ func (m *manager) ExecuteWithPipe(ctx context.Context, command Command) error {
 
 		// Ждем немного для graceful shutdown
 		select {
-		case <-done:
+		case <-waitDone:
 			// Процесс завершился
 		case <-time.After(forceKillTimeout):
 			// Принудительно завершаем всю группу
@@ -265,18 +298,20 @@ func (m *manager) ExecuteWithPipe(ctx context.Context, command Command) error {
 			if err := killProcessGroup(cmd); err != nil {
 				m.lgr.Warn().Err(err).Str("cmd", command.Cmd).Msg("Failed to kill process group")
 			}
+
+			<-waitDone
 		}
 
 		wg.Wait()
 
 		return ctx.Err()
 
-	case err := <-done:
+	case <-waitDone:
 		// Команда завершилась
 		outputCancel()
 		wg.Wait()
 
-		if err != nil {
+		if err := <-waitErr; err != nil {
 			return handleCommandCompletionErr(err, m.lgr)
 		}
 

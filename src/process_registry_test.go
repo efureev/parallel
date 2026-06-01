@@ -25,7 +25,16 @@ func TestProcessRegistry_AddRemoveAndStopAll(t *testing.T) {
 
 	cmd := startSleepCmd(t)
 	key := "test_cmd"
-	reg.add(key, cmd)
+
+	// Владельцем cmd.Wait() выступает отдельная горутина (как в executor):
+	// она единственная вызывает Wait и закрывает done после завершения.
+	waitDone := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(waitDone)
+	}()
+
+	reg.add(key, cmd, waitDone)
 
 	// ensure process is tracked
 	if len(reg.snapshot()) != 1 {
@@ -39,10 +48,13 @@ func TestProcessRegistry_AddRemoveAndStopAll(t *testing.T) {
 		t.Fatalf("stopAll took too long, possible deadlock")
 	}
 
-	// command must be finished
-	if err := cmd.Wait(); err == nil {
-		// ok: finished cleanly or with signal, but Wait must return at this point
-	} // if Wait blocks, test would time out
+	// command must be finished: waitDone must be closed by now (single Wait owner).
+	select {
+	case <-waitDone:
+		// ok
+	case <-time.After(forceKillTimeout):
+		t.Fatalf("command did not finish after stopAll")
+	}
 
 	// remove and ensure empty
 	reg.remove(key)

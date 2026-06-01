@@ -21,10 +21,27 @@ jobs:
             goarch: amd64
             runner: ubuntu-latest
             suffix: linux.x64
+            ext: ''
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-latest
+            suffix: linux.arm64
+            ext: ''
           - goos: darwin
             goarch: amd64
             runner: macos-latest
             suffix: darwin.x64
+            ext: ''
+          - goos: darwin
+            goarch: arm64
+            runner: macos-latest
+            suffix: darwin.arm64
+            ext: ''
+          - goos: windows
+            goarch: amd64
+            runner: windows-latest
+            suffix: windows.x64
+            ext: '.exe'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -56,6 +73,7 @@ jobs:
           echo "date=$DATE" >> "$GITHUB_OUTPUT"
 
       - name: Build
+        shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -69,9 +87,9 @@ jobs:
             -X github.com/efureev/parallel/src.Date=${{ steps.meta.outputs.date }} \
             -X github.com/efureev/parallel/src.BuiltBy=github-actions"
           mkdir -p build
-          OUT="build/${APP}.${{ matrix.suffix }}"
+          OUT="build/${APP}.${{ matrix.suffix }}${{ matrix.ext }}"
           go build -trimpath -ldflags "$LD_FLAGS" -o "$OUT" ./
-          echo "OUT=$OUT" >> $GITHUB_ENV
+          echo "OUT=$OUT" >> "$GITHUB_ENV"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5
@@ -79,8 +97,10 @@ jobs:
           name: parallel-${{ steps.meta.outputs.version }}-${{ matrix.suffix }}
           path: ${{ env.OUT }}
       - name: Display structure of uploaded files
+        shell: bash
         run: ls -R
       - name: Display dist path
+        shell: bash
         run: echo ${{ env.OUT }}
 
   release:

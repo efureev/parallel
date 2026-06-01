@@ -19,7 +19,7 @@ This README includes typical use cases and practical examples.
 
 ## Installation
 
-Requirements: Go 1.25+ (tested on macOS/Linux)
+Requirements: Go 1.25+ (tested on macOS/Linux/Windows)
 
 ```shell
 go install github.com/efureev/parallel@latest
@@ -45,6 +45,15 @@ Flags are supported currently:
 
 - `-f` — path to YAML config (defaults to `.parallelrc.yaml`)
 - `-v` — version info
+
+### Exit codes
+
+Parallel is CI/script friendly and reports a meaningful exit status:
+
+- `0` — all chains finished successfully (also for `-v`).
+- `1` — startup/configuration error (e.g., missing or invalid config) or a command in a chain failed.
+
+This lets you safely use `parallel` in scripts and pipelines (e.g., `parallel -f flow.yaml && next-step`).
 
 ## Screenshots
 
@@ -139,7 +148,8 @@ commands:
 
 - Parallel starts each chain concurrently.
 - Inside a chain:
-    - Commands with `pipe: false` are executed sequentially, in order.
+    - Commands with `pipe: false` are executed sequentially, in the exact order they appear in the YAML (chain and
+      command order is preserved deterministically across runs).
     - Commands with `pipe: true` start immediately and run concurrently with others in the same chain; the chain
       completes only after all piped commands finish.
     - If a non‑piped command fails, subsequent commands in that chain are not started; already running piped commands
@@ -169,6 +179,10 @@ commands:
 Parallel traps `SIGINT`, `SIGTERM`, `SIGQUIT` and forwards the same signal to the entire process group of each running
 command (`setpgid` + group signal). Then it waits for completion up to a short timeout and only then force‑kills
 remaining groups.
+
+> Platform note: the full signal‑forwarding behavior above applies to Unix (macOS/Linux). On Windows, children are
+> started in a new process group (`CREATE_NEW_PROCESS_GROUP`); arbitrary signal forwarding is limited, so on shutdown
+> the process group is terminated (kill fallback) rather than receiving a graceful Unix‑style signal.
 
 What this means for you:
 
@@ -245,6 +259,14 @@ Run tests:
 ```shell
 go test ./...
 ```
+
+The repository also ships `make` targets (run inside Docker, no local tooling required):
+
+- `make test` — run linters and tests
+- `make lint` — run `golangci-lint`
+- `make fmt` — format the code (goimports + `gofmt -s` + `go mod tidy`)
+
+See [`CHANGELOG.md`](CHANGELOG.md) for the list of notable changes.
 
 The project structure is split into clear layers:
 

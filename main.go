@@ -119,16 +119,24 @@ func runApplication(ctx context.Context, sigCh <-chan os.Signal, flags *parallel
 }
 
 func main() {
+	os.Exit(run())
+}
+
+// run содержит основную логику и возвращает код выхода процесса,
+// чтобы defer-ы отработали до os.Exit.
+func run() int {
 	flags, err := parallel.ParseFlags()
 	if err != nil {
-		log.Fatalf("Failed to parse flags: %v", err)
+		log.Printf("Failed to parse flags: %v", err)
+
+		return 1
 	}
 
 	// Handle version request early and exit.
 	if flags.VersionRequested {
 		log.Print(parallel.VersionLong())
 
-		return
+		return 0
 	}
 
 	ctx, cancel, sigCh := setupSignalContext()
@@ -139,6 +147,8 @@ func main() {
 	if err := runApplication(ctx, sigCh, flags, logger); err != nil {
 		logger.Error().Err(err).Msg("Application failed")
 
-		return
+		return 1
 	}
+
+	return 0
 }

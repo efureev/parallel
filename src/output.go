@@ -3,6 +3,7 @@ package parallel
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"strings"
 
@@ -42,6 +43,49 @@ func (o *outputFormatter) formatChainInfo(cmd Command) *commandOutput {
 	}
 }
 
+// chainPrefix возвращает форматированный префикс с именем цепочки и разделителем.
+// Если цепочка не определена, возвращается пустая строка (вывод без раскраски).
+func chainPrefix(chain *CommandChain) string {
+	if chain == nil {
+		return ""
+	}
+
+	chainName := strings.ToUpper(chain.Name)
+	div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(dividerSymbol)
+
+	return chain.Color.Wrap(chainName) + ` ` + div
+}
+
+// streamLines читает строки из reader в отдельной горутине и публикует их в каналы.
+// Чтение блокирующее, поэтому вынесено из основного цикла: это позволяет немедленно
+// прервать обработку при отмене ctx, не дожидаясь следующей строки от «молчащего»
+// процесса (пайп закрывается при завершении/Kill).
+func streamLines(ctx context.Context, reader *bufio.Reader) (<-chan string, <-chan error) {
+	lines := make(chan string)
+	errCh := make(chan error, 1)
+
+	go func() {
+		for {
+			str, err := reader.ReadString('\n')
+			if len(str) > 0 {
+				select {
+				case lines <- strings.TrimSuffix(str, newlineChar):
+				case <-ctx.Done():
+					return
+				}
+			}
+
+			if err != nil {
+				errCh <- err
+
+				return
+			}
+		}
+	}()
+
+	return lines, errCh
+}
+
 // handleOutput читает строки из reader и передаёт их в handler с форматированием имени цепочки и команды.
 func (o *outputFormatter) handleOutput(
 	ctx context.Context,
@@ -49,44 +93,22 @@ func (o *outputFormatter) handleOutput(
 	cmd Command,
 	handler outputHandler,
 ) error {
-	chain := cmd.GetChain()
-
-	var (
-		chainName         string
-		chainNameStyle    reggol.TextStyle
-		chainNameStyleTxt string
-	)
-
-	if chain != nil {
-		chainName = strings.ToUpper(chain.Name)
-		chainNameStyle = chain.Color
-		div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(dividerSymbol)
-		chainNameStyleTxt = chainNameStyle.Wrap(chainName) + ` ` + div
-	} else {
-		// fallback без раскраски, если цепочка не определена
-		chainNameStyleTxt = ""
-	}
-
+	chainNameStyleTxt := chainPrefix(cmd.GetChain())
 	cmdName := nameReplace(cmd)
+	lines, errCh := streamLines(ctx, reader)
+
 	counter := 0
 
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-		}
-
-		str, err := reader.ReadString('\n')
-		if len(str) > 0 {
-			str = strings.TrimSuffix(str, newlineChar)
-			handler(chainNameStyleTxt, cmdName, str, counter)
+		case line := <-lines:
+			handler(chainNameStyleTxt, cmdName, line, counter)
 			counter++
-		}
-
-		if err != nil {
-			if err == io.EOF {
-				break
+		case err := <-errCh:
+			if errors.Is(err, io.EOF) {
+				return nil
 			}
 
 			o.lgr.Err(err).Push()
@@ -94,6 +116,4 @@ func (o *outputFormatter) handleOutput(
 			return err
 		}
 	}
-
-	return nil
 }

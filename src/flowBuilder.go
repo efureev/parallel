@@ -12,9 +12,9 @@ func NewFlowBuilder(lgr *reggol.Logger) *FlowBuilder {
 }
 
 // Build преобразует ConfigData в доменную структуру Flow.
+// Порядок цепочек и команд внутри них сохраняется ровно таким, каким он задан в конфигурации.
 func (b *FlowBuilder) Build(data ConfigData) Flow {
-	commands, ok := data[`commands`]
-	if !ok {
+	if len(data.Chains) == 0 {
 		b.lgr.Error().Str(`field`, `commands`).Msg(`Missing Config Field`)
 
 		return Flow{}
@@ -26,23 +26,23 @@ func (b *FlowBuilder) Build(data ConfigData) Flow {
 
 	flow := &Flow{}
 
-	for chainName, chainRaw := range commands {
+	for _, chainCfg := range data.Chains {
 		currentColor, colorList = colorList[0], colorList[1:]
 		if len(colorList) == 0 {
 			colorList = GenColors(true)
 		}
 
 		chain := CommandChain{
-			Name:  chainName,
+			Name:  chainCfg.Name,
 			Color: currentColor,
 		}
 
-		for cmdName, cmdRaw := range chainRaw {
+		for _, namedCmd := range chainCfg.Commands {
 			var cmd Command
-			if cmdRaw.Docker != nil {
-				cmd = b.createDockerCommand(cmdName, cmdRaw)
+			if namedCmd.Spec.Docker != nil {
+				cmd = b.createDockerCommand(namedCmd.Name, namedCmd.Spec)
 			} else {
-				cmd = b.createRegularCommand(cmdName, cmdRaw)
+				cmd = b.createRegularCommand(namedCmd.Name, namedCmd.Spec)
 			}
 
 			chain.Add(cmd)
