@@ -9,145 +9,154 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Строковая форма команды `run:`.** `run: 'npm run dev'` выполняется через оболочку
-  (`sh -c`, на Windows `%COMSPEC% /c`), поэтому в ней работают `&&`, пайпы, globs и подстановка
-  переменных. Форма `cmd:` осталась прежней и по-прежнему берётся буквально; указать оба поля
-  разом — ошибка, а не молчаливое предпочтение одного. В префиксе вывода у shell-формы
-  показывается только имя команды: единственный её аргумент — вся строка целиком, и в каждой
-  строке лога он превращался бы в шум.
-- **Запуск без файла конфигурации.** `parallel -- 'go run ./cmd/api' 'yarn dev'` собирает Flow
-  прямо из аргументов: команда на цепочку, все потоковые. Имя цепочки берётся из первого слова
-  команды; совпадающие имена различаются номером.
-- **Отбор цепочек из командной строки.** `parallel api ui` запускает только названные,
-  `-except worker` — всё, кроме перечисленных. Раньше единственным способом был `disable: true`
-  в файле, который лежит в репозитории. Неизвестное имя — ошибка со списком доступных: иначе
-  опечатка давала бы «успешный» запуск, в котором не выполнилось ничего. Цвет цепочки при
-  отборе не меняется.
-- **`-list` и `-dry-run`.** Первый показывает, что конфигурация определяет, второй — что именно
-  запустится, и оба завершают работу, ничего не запуская.
-- **Итоговая сводка.** Если цепочек больше одной, в конце печатается таблица «цепочка — статус —
-  длительность», а у отказавшей ещё и причина. Статус `stopped` отличает цепочку, которую
-  оборвал отказ соседней или сигнал, от той, что доработала сама.
-- **`NO_COLOR`, `FORCE_COLOR` и флаг `-no-color`.** Соглашение no-color.org раньше
-  игнорировалось: раскраска определялась исключительно наличием терминала.
-- **Конфигурация ищется вверх по дереву каталогов.** Раньше поиск шёл только в текущем
-  каталоге, поэтому запуск из подкаталога проекта падал с «config file not found» — при том,
-  что файл в проекте есть. Теперь подъём идёт до корня файловой системы, как это делает `git`
-  со своей конфигурацией; побеждает ближайший каталог. Относительные значения `dir`
-  разрешаются от найденного файла, так что конфигурация из корня проекта работает из любого
-  подкаталога.
-- **Принимается расширение `.parallelrc.yml`.** Обе формы одинаково распространены, а
-  пользователь, назвавший файл `.yml`, получал ошибку с именем, которого он не писал. Внутри
-  одного каталога `.yaml` предпочитается `.yml`.
-- Сообщение о ненайденной конфигурации перечисляет искомые имена и указывает, что поиск шёл
-  по родительским каталогам.
+- **String command form `run:`.** `run: 'npm run dev'` is executed through the shell (`sh -c`,
+  `%COMSPEC% /c` on Windows), so `&&`, pipes, globs and variable expansion all work in it. The
+  `cmd:` form is unchanged and still taken literally; specifying both at once is an error rather
+  than a silent preference for one of them. In the output prefix a shell-form command shows its
+  name only: its single argument is the entire command line, which would turn every log line
+  into noise.
+- **Running with no configuration file.** `parallel -- 'go run ./cmd/api' 'yarn dev'` builds the
+  Flow straight from the arguments: one chain per command, all of them streaming. The chain name
+  is taken from the first word of the command, and identical names are told apart by a number.
+- **Chain selection from the command line.** `parallel api ui` runs only the named chains,
+  `-except worker` runs everything but the listed ones. Until now the only way was
+  `disable: true` in a file that lives in the repository. An unknown name is an error that lists
+  the available ones: otherwise a typo would produce a "successful" run in which nothing
+  executed. A chain keeps its color when a subset is selected.
+- **`-list` and `-dry-run`.** The first shows what the configuration defines, the second shows
+  what exactly would run; both exit without starting anything.
+- **Run summary.** When more than one chain is involved, a chain / status / duration table is
+  printed at the end, with the reason next to a failed one. The `stopped` status separates a
+  chain that was cut short — by a sibling failure or by a signal — from one that finished on its
+  own.
+- **`NO_COLOR`, `FORCE_COLOR` and the `-no-color` flag.** The no-color.org convention used to be
+  ignored: coloring was decided solely by whether the output was a terminal.
+- **The configuration file is looked up in parent directories.** Lookup used to happen in the
+  current directory only, so running from a subdirectory of a project failed with "config file
+  not found" — even though the project does contain the file. The search now walks up to the
+  filesystem root, the way `git` finds its own configuration, and the nearest directory wins.
+  Relative `dir` values are resolved against the file that was found, so a configuration at the
+  project root works from any subdirectory.
+- **`.parallelrc.yml` is accepted.** Both spellings are equally common, and a user who named the
+  file `.yml` used to get an error quoting a name they had never written. Within one directory
+  `.yaml` is preferred over `.yml`.
+- The "configuration not found" message lists the names that were searched and states that
+  parent directories were included.
 
 ### Fixed
 
-- **Отказ цепочки, оборванной по fail-fast, выглядел успехом.** Отмена контекста ошибкой не
-  считается, поэтому такая цепочка попадала в итог как завершившаяся штатно. Теперь она
-  помечается отдельным статусом.
+- **A chain cut short by fail-fast looked successful.** Context cancellation is not treated as an
+  error, so such a chain ended up in the summary as having finished normally. It now carries a
+  status of its own.
 
 ### Changed
 
-- **Путь из `-f` берётся буквально и наверху не ищется.** Опечатка в явном пути обязана
-  падать, а не подхватывать чужую конфигурацию из родительского каталога. Значение `-f ""`
-  по-прежнему ошибка.
+- **The path given with `-f` is taken literally and is never searched for upwards.** A typo in an
+  explicit path must fail rather than quietly pick up someone else's configuration from a parent
+  directory. `-f ""` remains an error.
 
 ## [1.0.0] - 2026-08-13
 
-Первая мажорная версия. Полная переработка внутреннего устройства при неизменном
-поведении командной строки: конфигурации, работавшие на `0.x`, продолжают работать
-без правок, а вывод на той же конфигурации совпадает с прежним посимвольно.
+The first major release. A complete rework of the internals with no change to command-line
+behaviour: configurations that worked on `0.x` keep working unmodified, and the output for the
+same configuration matches the previous one character for character.
 
-**Ломающие изменения**
+**Breaking changes**
 
-- **Импорт `github.com/efureev/parallel/src` перестал существовать.** Весь код переехал в
-  `cmd/parallel` и `internal/*`, то есть импортируемого Go-API у проекта больше нет вовсе.
-  `parallel` — команда, а не библиотека. Установка через `go install` не изменилась.
-- **На Windows завершение стало мягким.** Дочерней группе процессов доставляется консольное
-  событие `CTRL_BREAK` (его обрабатывают Node.js, Python, .NET и Go), и лишь затем, по таймауту,
-  выполняется убийство. Раньше процесс убивался сразу, без шанса закрыть соединения.
-- **Повторный Ctrl+C больше не игнорируется.** Первый — вежливая остановка, второй — немедленное
-  убийство всех процессов, третий — выход с кодом `130`.
+- **The import path `github.com/efureev/parallel/src` no longer exists.** All code moved to
+  `cmd/parallel` and `internal/*`, which means the project no longer exposes an importable Go API
+  at all. `parallel` is a command, not a library. Installation via `go install` is unchanged.
+- **Shutdown on Windows became graceful.** The child process group receives a `CTRL_BREAK`
+  console event (handled by the Node.js, Python, .NET and Go runtimes), and only then, on
+  timeout, is it killed. Previously the process was killed outright, with no chance to close
+  connections.
+- **A second Ctrl+C is no longer ignored.** The first one stops everything politely, the second
+  kills every process immediately, the third exits with status `130`.
 
-**Замороженный контракт `v1`** — флаги, коды возврата, схема конфигурации и семантика исполнения;
-подробности в разделе Compatibility файла `README.md`. Формат строк лога, палитра и тексты ошибок
-в контракт не входят и могут меняться. Путь модуля остаётся без суффикса `/vN`.
+**The frozen `v1` contract** covers flags, exit codes, the configuration schema and execution
+semantics; the details live in the Compatibility section of `README.md`. The log line format, the
+palette and error wording are deliberately outside it and may change. The module path stays
+without a `/vN` suffix.
 
 ### Fixed
 
-- **Опечатка в имени поля конфигурации молча игнорировалась.** `pipeline` вместо `pipe`,
-  `diir` вместо `dir` — файл принимался, команда выполнялась не так, как задумал автор, и
-  узнать об этом было можно только по косвенным признакам. Теперь неизвестное поле — ошибка
-  с указанием места и подсказкой ближайшего известного имени.
-- **`parallel -h` завершался с кодом 1** и печатал «Failed to parse flags», то есть просьба
-  показать справку считалась сбоем и ломала скрипты. Текст справки заодно переписан:
-  автогенерируемый показывал `-v` и `-version` двумя отдельными пунктами и не давал примеров.
-- **`env` в режиме `docker` не доходил до контейнера.** Переменные задавались процессу клиента
-  `docker`, а тот своё окружение контейнеру не передаёт, поэтому написанное рядом с секцией
-  `docker` не доходило никуда. Теперь они превращаются в аргументы `-e KEY=VALUE`. Обычные
-  команды не затронуты: у них `env` по-прежнему окружение процесса.
-- **Код возврата не различал причины отказа.** Любая ошибка схлопывалась в `1`, и скрипт не
-  мог отличить «команда упала с кодом 2» от «конфигурация не читается». Теперь наружу уходит
-  код команды, чей отказ остановил запуск; ошибки конфигурации и запуска по-прежнему дают `1`.
-- **Относительный `dir` разрешался от текущего каталога процесса**, а не от файла
-  конфигурации. Конфигурация работала только при запуске из «правильного» места, хотя лежит
-  рядом с проектом. Абсолютные пути не затронуты; для конфигурации в корне проекта, запускаемой
-  оттуда же, поведение не меняется.
-- **Отказ второй и последующих pipe-команд в цепочке терялся:** ожидание группы возвращало
-  только первую ошибку. Ошибки собираются по позиции команды, поэтому и состав, и порядок
-  теперь не зависят от планировщика.
-- **Несуществующий рабочий каталог сообщался как ошибка исполняемого файла** —
-  «fork/exec /bin/pwd: no such file or directory», хотя отсутствовал каталог. Теперь так и
-  написано: `working directory "…" does not exist`.
-- **У каждой piped-команды терялись последние строки вывода.** `cmd.Wait()` закрывает пайпы, как
-  только процесс вышел, а чтение вывода отменялось до того, как читатели дочитали остаток. Терялось
-  порядка 60 строк на команду независимо от общего объёма — то есть ровно итог работы: результат
-  `go test`, сообщение об ошибке перед выходом, хвост сборки. Порядок завершения инвертирован:
-  сначала вывод дочитывается до EOF, затем собирается статус процесса. Сторожит
-  `TestE2EOutputIntegrity`, проверяющий, что до пользователя дошли все строки до единой.
-- **Строки вывода разных цепочек могли накладываться друг на друга.** Запись в общий дескриптор из
-  множества горутин не была синхронизирована; на строках длиннее `PIPE_BUF` это давало
-  чересполосицу. Записи сериализованы.
-- **Утечка горутины в `ExecuteParallel`.** Наблюдатель за отменой ждал родительский контекст и, если
-  тот не отменялся, жил до конца процесса.
-- **Ошибки цепочек терялись.** Возвращалась первая пришедшая, остальные отбрасывались, причём какая
-  именно долетит — зависело от планировщика. Теперь возвращаются все через `errors.Join`.
-- **Ошибка разбора конфигурации не указывала место.** Теперь сообщение содержит файл, строку,
-  колонку и фрагмент исходника с указателем на проблемное место.
-- **`FlowBuilder.Build` при отсутствии ключа `commands` возвращал пустой `Flow`** вместо ошибки.
+- **A typo in a configuration field name was silently ignored.** `pipeline` instead of `pipe`,
+  `diir` instead of `dir` — the file was accepted, the command ran differently from what its
+  author intended, and the only clues were indirect. An unknown field is now an error that points
+  at the position and suggests the closest known name.
+- **`parallel -h` exited with status 1** and printed "Failed to parse flags", so asking for help
+  counted as a failure and broke scripts. The help text was rewritten along the way: the
+  generated one listed `-v` and `-version` as two separate entries and gave no examples.
+- **`env` in `docker` mode never reached the container.** The variables were applied to the
+  `docker` client process, and the client does not pass its own environment to the container, so
+  anything written next to a `docker` section went nowhere. They are now turned into
+  `-e KEY=VALUE` arguments. Regular commands are unaffected: for them `env` is still the process
+  environment.
+- **The exit code did not distinguish causes of failure.** Every error collapsed into `1`, so a
+  script could not tell "the command exited with 2" from "the configuration is unreadable". The
+  exit code of the command whose failure stopped the run is now propagated; configuration and
+  startup errors still give `1`.
+- **A relative `dir` was resolved against the process working directory** rather than against the
+  configuration file. A configuration only worked when started from the "right" place, even
+  though it sits next to the project. Absolute paths are unaffected, and for a configuration at
+  the project root started from that same root nothing changes.
+- **The failure of the second and later piped commands in a chain was lost:** waiting on the
+  group returned only the first error. Errors are now collected by command position, so both
+  their set and their order no longer depend on the scheduler.
+- **A missing working directory was reported as a problem with the executable** —
+  "fork/exec /bin/pwd: no such file or directory" — when it was the directory that was absent.
+  The message now says exactly that: `working directory "…" does not exist`.
+- **Every piped command lost the last lines of its output.** `cmd.Wait()` closes the pipes as
+  soon as the process exits, and output reading was cancelled before the readers had drained the
+  remainder. Roughly 60 lines per command were lost regardless of the total volume — that is,
+  precisely the result of the work: the `go test` verdict, the error message before exit, the
+  tail of a build. The shutdown order was inverted: the output is drained to EOF first, and only
+  then is the process status collected. Guarded by `TestE2EOutputIntegrity`, which requires that
+  every single line reaches the user.
+- **Output lines from different chains could overlap.** Writes to the shared descriptor from many
+  goroutines were not synchronized, which produced interleaving on lines longer than `PIPE_BUF`.
+  Writes are now serialized.
+- **A goroutine leak in `ExecuteParallel`.** The cancellation watcher waited on the parent context
+  and, if that was never cancelled, lived until the process ended.
+- **Chain errors were lost.** The first one to arrive was returned and the rest discarded, and
+  which one arrived first depended on the scheduler. All of them are now returned via
+  `errors.Join`.
+- **A configuration parse error did not point at the position.** The message now contains the
+  file, line, column and a source fragment with a marker at the offending spot.
+- **`FlowBuilder.Build` returned an empty `Flow` instead of an error** when the `commands` key was
+  missing.
 
 ### Added
 
-- **`env:` в схеме команды** — переменные окружения для конкретной команды. Дополняют окружение
-  процесса, а не заменяют его; при совпадении ключей побеждает значение из конфигурации.
-- **Флаг `-log-level`** (`debug`, `info`, `warn`, `error`). Отладочные сообщения в коде были,
-  но до пользователя не доходили никогда и включить их было нечем — при разборе зависшего
-  процесса нужны как раз они.
-- **Каталог `examples/`** с двумя самодостаточными конфигурациями, работающими из коробки.
-- **Предупреждение о несуществующем рабочем каталоге** при старте. Именно предупреждение, а не
-  ошибка: каталог может создаваться предыдущей командой цепочки.
-- Бенчмарки горячего пути и e2e-проверка целостности вывода.
+- **`env:` in the command schema** — environment variables for a specific command. They extend
+  the process environment rather than replacing it; on a key collision the value from the
+  configuration wins.
+- **The `-log-level` flag** (`debug`, `info`, `warn`, `error`). Debug messages existed in the code
+  but never reached the user and there was no way to turn them on — which is exactly what is
+  needed when investigating a stuck process.
+- **An `examples/` directory** with two self-contained configurations that work out of the box.
+- **A warning about a missing working directory** at startup. A warning rather than an error: the
+  directory may be created by an earlier command in the chain.
+- Benchmarks for the hot path and an end-to-end output integrity check.
 
 ### Changed
 
-- **Раскладка проекта приведена к стандартной для Go**: `cmd/parallel` плюс `internal/*` по слоям
-  (`flow`, `config`, `runner`, `ui`, `cli`, `buildinfo`). Направление зависимостей между слоями
-  проверяется линтером `depguard`, а не соглашением.
-- **Логирование изолировано за собственным интерфейсом**: библиотека упоминается ровно в одном файле
-  проекта, поэтому смена её мажорной версии больше не задевает остальной код.
-- **Зависимости:** `reggol` обновлён с `0.4.1` до `1.2.1`, разбор YAML переведён с
-  `gopkg.in/yaml.v3` (без релизов с 2022 года) на `goccy/go-yaml`, добавлены `golang.org/x/sync`
-  и `golang.org/x/sys`. Минимальная версия Go поднята до 1.26.
-- **Производительность вывода.** Форматирование блочного вывода было квадратичным: на 10 000 строк
-  уходило 4.59 ГБ выделенной памяти и треть секунды — теперь 926 КБ и 0.13 мс. Сквозной путь строки
-  подешевел с 900 до 272 нс, пропускная способность на реальном пайпе выросла с 268 до 803 тысяч
-  строк в секунду. Вывод буферизуется и сбрасывается по таймеру, так что интерактивность сохраняется.
-- **Тайминги завершения настраиваются**, а не зашиты константами. Полный прогон тестов ускорился
-  с 6.6 до 4.2 секунды, самый долгий тест — с 3.3 до 0.3 секунды.
-- `build.sh` даёт имя файла по реальному `GOARCH`: сборка под arm64 больше не выдаёт файл
-  с суффиксом `.x64`.
+- **The project layout follows the Go standard**: `cmd/parallel` plus `internal/*` split by layer
+  (`flow`, `config`, `runner`, `ui`, `cli`, `buildinfo`). The direction of dependencies between
+  layers is enforced by the `depguard` linter rather than by convention.
+- **Logging is isolated behind an interface of its own**: the library is named in exactly one file
+  of the project, so a change of its major version no longer touches the rest of the code.
+- **Dependencies:** `reggol` updated from `0.4.1` to `1.2.1`, YAML parsing moved from
+  `gopkg.in/yaml.v3` (no releases since 2022) to `goccy/go-yaml`, and `golang.org/x/sync` and
+  `golang.org/x/sys` were added. The minimum Go version is now 1.26.
+- **Output performance.** Formatting of block output was quadratic: 10,000 lines took 4.59 GB of
+  allocations and a third of a second — now it is 926 KB and 0.13 ms. The end-to-end cost of a
+  line dropped from 900 to 272 ns, and throughput on a real pipe grew from 268,000 to 803,000
+  lines per second. Output is buffered and flushed on a timer, so interactivity is preserved.
+- **Shutdown timings are configurable** rather than hard-coded constants. The full test run got
+  faster, from 6.6 to 4.2 seconds, and the slowest test from 3.3 to 0.3 seconds.
+- `build.sh` names the file after the real `GOARCH`: an arm64 build no longer produces a file with
+  an `.x64` suffix.
 
 ## [0.11.0] - 2026-06-01
 
@@ -248,3 +257,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [0.10.0]: https://github.com/efureev/parallel/releases/tag/0.10.0
 [1.0.0]: https://github.com/efureev/parallel/releases/tag/v1.0.0
+[1.1.0]: https://github.com/efureev/parallel/releases/tag/v1.1.0
