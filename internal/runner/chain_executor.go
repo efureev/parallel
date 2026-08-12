@@ -41,7 +41,7 @@ func newChainExecutor(lgr ui.Logger, runner CommandRunner, stopAll stopAllFunc) 
 //
 // Оркестрация построена на errgroup: раньше здесь были собственные WaitGroup,
 // канал ошибок и горутина-монитор, причём монитор ждал отмены РОДИТЕЛЬСКОГО
-// контекста и жил до конца процесса, если тот не отменялся никогда (находка C1).
+// контекста и жил до конца процесса, если тот не отменялся никогда.
 // errgroup.WithContext закрывает и оркестрацию, и время жизни наблюдателя.
 func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.CommandChain) error {
 	group, groupCtx := errgroup.WithContext(ctx)
@@ -55,7 +55,7 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.Comm
 
 	// Ошибки собираются отдельно от errgroup намеренно: errgroup.Wait отдаёт
 	// только первую, а нам нужны все — иначе пользователь чинит по одной
-	// проблеме за прогон (находка C2). От errgroup берём другое: отмену
+	// проблеме за прогон. От errgroup берём другое: отмену
 	// groupCtx при первом отказе и корректное ожидание всех горутин.
 	var (
 		mu   sync.Mutex
@@ -163,7 +163,7 @@ func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandCha
 	}
 
 	// Ошибка последовательной команды идёт первой: именно она оборвала цепочку.
-	// Ошибки pipe-команд добавляются следом, ни одна не теряется (находка C2).
+	// Ошибки pipe-команд добавляются следом, ни одна не теряется.
 	return joinChainErrors(firstErr, piped.Wait())
 }
 

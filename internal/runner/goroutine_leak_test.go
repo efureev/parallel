@@ -10,7 +10,7 @@ import (
 	"github.com/efureev/parallel/internal/ui"
 )
 
-// TestExecuteParallel_NoGoroutineLeak — находка C1.
+// TestExecuteParallel_NoGoroutineLeak.
 //
 // Раньше ExecuteParallel запускал горутину-наблюдателя, которая ждала отмены
 // РОДИТЕЛЬСКОГО контекста. Если тот не отменялся никогда — а в тестах и при

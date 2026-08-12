@@ -12,9 +12,11 @@ import (
 	"github.com/efureev/parallel/internal/flow"
 )
 
-// Базовая линия для фазы 0 апгрейда (docs/UPGRADE-SPEC.md).
-// Бенчмарки пишут в io.Discard: иначе замерялась бы скорость терминала,
-// а не код проекта.
+// Бенчмарки горячего пути вывода.
+//
+// Пишут в io.Discard: иначе замерялась бы скорость терминала, а не код проекта.
+// Обратная сторона — экономия системных вызовов от буферизации здесь не видна,
+// её показывает только TestE2EOutputIntegrity через настоящий пайп.
 
 const (
 	benchLinesPerOp = 1000
@@ -38,8 +40,7 @@ func benchChainAndCommand() (*flow.CommandChain, flow.Command) {
 // бенчмарк обязан мерить то, что выполняется в проде.
 //
 // Разделитель приходит параметром, потому что в проде он вычисляется один раз
-// при создании форматтера. До фазы 2 он собирался заново на каждой строке —
-// это была находка P2, снятая как побочный результат выноса раскраски в ui.
+// при создании форматтера, а не на каждой строке вывода.
 func benchStdoutHandler(lgr Logger, div string) OutputHandler {
 	return func(chainNameStyleText, cmdName, content string, counter int) {
 		cmdNameStyled := fmt.Sprintf(`%s (%d) %s`, cmdName, counter, div)
@@ -68,7 +69,6 @@ func BenchPayload(lines, width int) []byte {
 }
 
 // BenchmarkRenderLine мерит стоимость одной строки вывода: форматирование плюс отдача в логгер.
-// Цель находки P2 — убрать аллокацию неизменного разделителя из этого цикла.
 func BenchmarkRenderLine(b *testing.B) {
 	out := NewDiscardOutput()
 	lgr, formatter := out.Logger(), out.Formatter()

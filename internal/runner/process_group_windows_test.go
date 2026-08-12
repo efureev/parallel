@@ -36,7 +36,7 @@ func runGracefulChild() {
 	os.Exit(0)
 }
 
-// TestWindows_GracefulShutdownViaCtrlBreak — находка C5.
+// TestWindows_GracefulShutdownViaCtrlBreak.
 //
 // До этой фазы sendSignalToGroup на Windows сразу убивал процесс, и graceful
 // shutdown на трети поддерживаемых платформ отсутствовал как класс. Теперь

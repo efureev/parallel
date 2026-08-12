@@ -34,7 +34,7 @@ func benchConfigYAML(chains, perChain int) []byte {
 }
 
 // BenchmarkParseConfig мерит разбор конфигурации через обход YAML-AST.
-// Опорная точка для миграции на goccy/go-yaml (находка T5).
+// Опорная точка для миграции на goccy/go-yaml.
 func BenchmarkParseConfig(b *testing.B) {
 	raw := benchConfigYAML(benchChains, benchCommandsPerChain)
 	marshaller := YamlFileMarshaller{}

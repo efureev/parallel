@@ -31,8 +31,8 @@ func (b *syncBuffer) String() string {
 
 // TestSink_CloseFlushesTail — главная гарантия буферизации: хвост не теряется.
 //
-// Фаза 3 устранила потерю вывода на стороне чтения; буферизация записи вернула
-// бы ту же проблему с другого конца, если бы Close не досбрасывал остаток.
+// Потеря вывода устранена на стороне чтения; буферизация записи вернула бы ту же
+// проблему с другого конца, если бы Close не досбрасывал остаток.
 func TestSink_CloseFlushesTail(t *testing.T) {
 	var buf syncBuffer
 
@@ -79,7 +79,7 @@ func TestSink_FlushesOnTimer(t *testing.T) {
 }
 
 // TestSink_FlushLatency замеряет фактическую задержку появления редкой строки.
-// Требование фазы 4 — не более 50 мс.
+// Бюджет — не более 50 мс: за выводом parallel смотрят живьём.
 func TestSink_FlushLatency(t *testing.T) {
 	const budget = 50 * time.Millisecond
 
@@ -127,11 +127,15 @@ func TestSink_ConcurrentWrites(t *testing.T) {
 
 	wg.Add(writers)
 
+	// Каждый писатель шлёт строку из своего символа: так видно, что записи
+	// не перемешались между собой.
+	const alphabet = "abcdefgh"
+
 	for w := range writers {
 		go func() {
 			defer wg.Done()
 
-			payload := []byte(strings.Repeat(string(rune('a'+w)), 64) + "\n")
+			payload := []byte(strings.Repeat(alphabet[w:w+1], 64) + "\n")
 
 			for range lines {
 				if _, err := sink.Write(payload); err != nil {

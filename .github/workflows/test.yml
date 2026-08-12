@@ -24,8 +24,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: 'go.mod'
+      # v2.9 — первая версия, собранная на Go 1.26. Более ранние отказываются
+      # запускаться: «the Go language version used to build golangci-lint is lower
+      # than the targeted Go version». Поднимая директиву go в go.mod, проверь,
+      # что версия здесь и в docker-compose.yml собрана тем же Go или новее.
       - uses: golangci/golangci-lint-action@v9 # Action page: <https://github.com/golangci/golangci-lint-action>
-        with: { version: v2.7 }
+        with: { version: v2.12 }
 
   test:
     strategy:

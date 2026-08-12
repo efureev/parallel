@@ -58,7 +58,7 @@ func (r *recorder) wait(t *testing.T, n int) {
 	}
 }
 
-// TestWatchSignals_Ladder — находка C3.
+// TestWatchSignals_Ladder.
 //
 // Раньше из канала читался ровно один сигнал, после чего горутина завершалась.
 // Второй и третий Ctrl+C не делали ничего, и прервать пятнадцатисекундное

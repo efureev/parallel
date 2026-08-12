@@ -124,10 +124,14 @@ linters:
       - legacy
       - std-error-handling
     rules:
+      # goconst в тестах отключён намеренно: повторяющийся литерал вроде "echo"
+      # или "worker" в табличных тестах читается лучше, чем константа, за которой
+      # надо ходить в начало файла.
       - linters:
           - dupl
           - funlen
           - gochecknoglobals
+          - goconst
           - gocognit
           - scopelint
           - wsl_v5

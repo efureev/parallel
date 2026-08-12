@@ -20,7 +20,7 @@ func defaultShutdownSignal() os.Signal { return unix.SIGTERM }
 //
 // syscall.SysProcAttr здесь неизбежен: поле объявлено в os/exec именно этим
 // типом. Всё остальное взаимодействие с ядром идёт через golang.org/x/sys/unix —
-// пакет syscall заморожен и для нового кода не рекомендуется (находка A9).
+// пакет syscall заморожен и для нового кода не рекомендуется.
 func configureProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }

@@ -9,9 +9,9 @@ import (
 	"github.com/efureev/parallel/internal/flow"
 )
 
-// TestSetEnv_NilWhenNoOwnVars — находка P6: безусловный os.Environ() копировал
-// весь блок окружения на каждый запуск команды. exec.Cmd с нулевым Env
-// наследует окружение родителя сам.
+// TestSetEnv_NilWhenNoOwnVars: без собственных переменных Env не трогается вовсе.
+// exec.Cmd с нулевым Env наследует окружение родителя сам, а безусловный
+// os.Environ() копировал бы весь блок на каждый запуск команды.
 func TestSetEnv_NilWhenNoOwnVars(t *testing.T) {
 	cmd := execCommandForTest()
 
