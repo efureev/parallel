@@ -4,6 +4,8 @@
 [![Test](https://github.com/efureev/parallel/actions/workflows/test.yml/badge.svg)](https://github.com/efureev/parallel/actions/workflows/test.yml)
 [![Go Report Card](https://goreportcard.com/badge/github.com/efureev/parallel)](https://goreportcard.com/report/github.com/efureev/parallel)
 
+*Читать по-русски: [README.ru.md](README.ru.md).*
+
 A small CLI to run multiple console commands in parallel with readable, colored output. Useful for local development
 when you need to run several services/tools at once (web server, queues, bundlers, watchers, etc.).
 
@@ -136,7 +138,7 @@ commands: # list of parallel command chains
   and are skipped during execution. Default: `false`.
 - `env: { KEY: value }` — environment variables for this command. They are **added to** the environment `parallel`
   itself runs with, not a replacement for it, so there is no need to restate `PATH`. On a key collision the value from
-  the config wins. Works for both regular and Docker commands.
+  the config wins. See the caveat in [Docker mode](#docker-mode) for `docker` commands.
 - `format.cmdName` — display name template. Supports placeholders:
     - `%CMD_NAME%` — command name (either `Name` or `Cmd`)
     - `%CMD_ARGS%` — arguments joined by space
@@ -157,6 +159,12 @@ commands:
 When `docker` section is used, the tool builds the final `docker` command for you, adds `--rm` by default (unless
 `removeAfterAll: false`), applies `pull` policy and ports, and always runs with `pipe: true` for live logs. Because of
 this, Docker commands start concurrently and the chain waits for them to finish.
+
+> **`env` caveat in Docker mode.** Variables are applied to the `docker` *client* process, not to
+> the container — no `-e` flag is added to the generated command. That is useful for client-side
+> variables such as `DOCKER_HOST`, but `APP_ENV` will **not** appear inside the container. To pass
+> variables to the container, use the regular form with explicit arguments:
+> `cmd: [ 'docker', 'run', '--rm', '-e', 'APP_ENV=dev', 'nginx' ]`.
 
 Example of disabling commands (works for both regular and docker forms):
 
@@ -285,6 +293,12 @@ commands:
 - Command exits immediately with no output
     - Check `cmd` and arguments; make sure the binary exists in `PATH`
     - Verify `dir` points to a valid folder
+- A whole shell line is written in `cmd` (with a pipe or `&&`) and the command is not found
+    - `cmd` is a program plus its arguments, not a shell line. Invoke the shell explicitly:
+      `cmd: [ 'sh', '-c', 'a && b' ]`
+- Configuration is not found when running from a subdirectory
+    - Lookup happens in the current directory only, and only for the exact name `.parallelrc.yaml`
+      (the `.yml` extension does not match). Pass the path explicitly with `-f`
 - Docker command keeps running after Ctrl+C
     - The tool sends signal to the process group; ensure your containerized process handles `SIGTERM` and stops promptly
 - YAML error: “invalid flow configuration”
@@ -355,11 +369,4 @@ MIT
 
 ---
 
-Русский кратко
-
-Parallel — утилита для параллельного запуска нескольких команд с читаемым цветным выводом и корректным завершением.
-Конфигурация — YAML, запуск: `parallel -f examples/basic.yaml`.
-
-Первый Ctrl+C останавливает всё вежливо, второй — немедленно, третий выходит сразу. Вывод команд при
-завершении не теряется: всё, что команда успела напечатать, будет показано. Готовые примеры
-конфигурации лежат в каталоге `examples/`.
+Русская версия документации — [README.ru.md](README.ru.md).
