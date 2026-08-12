@@ -15,7 +15,7 @@ COMMIT=${COMMIT:-$(git rev-parse --short HEAD 2>/dev/null || echo "local")}
 DATE=${DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}
 BUILT_BY=${BUILT_BY:-"local"}
 
-LD_FLAGS="-s -w -X github.com/efureev/parallel/src.Version=${VERSION} -X github.com/efureev/parallel/src.Commit=${COMMIT} -X github.com/efureev/parallel/src.Date=${DATE} -X github.com/efureev/parallel/src.BuiltBy=${BUILT_BY}"
+LD_FLAGS="-s -w -X github.com/efureev/parallel/internal/buildinfo.Version=${VERSION} -X github.com/efureev/parallel/internal/buildinfo.Commit=${COMMIT} -X github.com/efureev/parallel/internal/buildinfo.Date=${DATE} -X github.com/efureev/parallel/internal/buildinfo.BuiltBy=${BUILT_BY}"
 
 print_build_info() {
     echo "Building options"
@@ -36,7 +36,7 @@ build_executable() {
     CGO_ENABLED=$CGO_SETTING \
     GOOS=$TARGET_OS \
     GOARCH=$TARGET_ARCH \
-        go build -trimpath -ldflags "$LD_FLAGS" -o "$BUILD_DIR/$executable_name" ./
+        go build -trimpath -ldflags "$LD_FLAGS" -o "$BUILD_DIR/$executable_name" ./cmd/parallel
 }
 
 main() {

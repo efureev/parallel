@@ -82,14 +82,32 @@ jobs:
           set -euo pipefail
           APP=parallel
           LD_FLAGS="-s -w \
-            -X github.com/efureev/parallel/src.Version=${{ steps.meta.outputs.version }} \
-            -X github.com/efureev/parallel/src.Commit=${{ steps.meta.outputs.commit }} \
-            -X github.com/efureev/parallel/src.Date=${{ steps.meta.outputs.date }} \
-            -X github.com/efureev/parallel/src.BuiltBy=github-actions"
+            -X github.com/efureev/parallel/internal/buildinfo.Version=${{ steps.meta.outputs.version }} \
+            -X github.com/efureev/parallel/internal/buildinfo.Commit=${{ steps.meta.outputs.commit }} \
+            -X github.com/efureev/parallel/internal/buildinfo.Date=${{ steps.meta.outputs.date }} \
+            -X github.com/efureev/parallel/internal/buildinfo.BuiltBy=github-actions"
           mkdir -p build
           OUT="build/${APP}.${{ matrix.suffix }}${{ matrix.ext }}"
-          go build -trimpath -ldflags "$LD_FLAGS" -o "$OUT" ./
+          go build -trimpath -ldflags "$LD_FLAGS" -o "$OUT" ./cmd/parallel
           echo "OUT=$OUT" >> "$GITHUB_ENV"
+
+      # Путь к переменным версии зашит строкой в -ldflags и компилятором не проверяется:
+      # переименование или перенос internal/buildinfo соберётся молча, а метаданные
+      # окажутся пустыми. Этот шаг делает такой отказ шумным.
+      - name: Smoke-check version metadata
+        # Только нативная сборка: кросс-скомпилированный бинарник на раннере не запустится.
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          out=$("$OUT" -v 2>&1)
+          echo "$out"
+          echo "$out" | grep -q "Version:   ${{ steps.meta.outputs.version }}" \
+            || { echo "::error::version not injected via ldflags"; exit 1; }
+          echo "$out" | grep -q "Commit:    ${{ steps.meta.outputs.commit }}" \
+            || { echo "::error::commit not injected via ldflags"; exit 1; }
+          echo "$out" | grep -q "Built by:  github-actions" \
+            || { echo "::error::builder not injected via ldflags"; exit 1; }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v5

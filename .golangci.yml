@@ -11,6 +11,7 @@ linters:
     - containedctx
     - contextcheck
     - decorder
+    - depguard
     - dogsled
     - dupl
     - durationcheck
@@ -48,6 +49,50 @@ linters:
     - whitespace
     - wsl_v5
   settings:
+    depguard:
+      # Правила слоёв из docs/UPGRADE-SPEC.md §3. Без автоматической проверки
+      # они разъезжаются за пару месяцев — это наблюдаемая история этого репозитория.
+      rules:
+        flow:
+          list-mode: lax
+          files: ['**/internal/flow/**']
+          deny:
+            - pkg: github.com/efureev/parallel/internal
+              desc: 'домен не зависит ни от одного другого слоя'
+        buildinfo:
+          list-mode: lax
+          files: ['**/internal/buildinfo/**']
+          deny:
+            - pkg: github.com/efureev/parallel/internal
+              desc: 'метаданные сборки не зависят ни от чего'
+        config:
+          list-mode: lax
+          files: ['**/internal/config/**']
+          deny:
+            - pkg: github.com/efureev/parallel/internal/runner
+              desc: 'config → только flow'
+            - pkg: github.com/efureev/parallel/internal/ui
+              desc: 'config → только flow'
+            - pkg: github.com/efureev/parallel/internal/cli
+              desc: 'config → только flow'
+        ui:
+          list-mode: lax
+          files: ['**/internal/ui/**']
+          deny:
+            - pkg: github.com/efureev/parallel/internal/config
+              desc: 'ui не знает о разборе конфигурации'
+            - pkg: github.com/efureev/parallel/internal/runner
+              desc: 'ui не знает о процессах'
+            - pkg: github.com/efureev/parallel/internal/cli
+              desc: 'ui не знает о слое запуска'
+        runner:
+          list-mode: lax
+          files: ['**/internal/runner/**']
+          deny:
+            - pkg: github.com/efureev/parallel/internal/config
+              desc: 'runner не знает о YAML'
+            - pkg: github.com/efureev/parallel/internal/cli
+              desc: 'runner не знает о слое запуска'
     dupl:
       threshold: 100
     forbidigo:
