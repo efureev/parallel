@@ -62,8 +62,14 @@ func TestBuild_EnvReachesCommand(t *testing.T) {
 		t.Errorf("regular command env = %q", got)
 	}
 
-	if got := strings.Join(commands[1].Env, ","); got != "NGINX_HOST=localhost" {
-		t.Errorf("docker command env = %q", got)
+	// У docker-команды переменные уезжают в аргументы флагами -e, а окружение
+	// процесса клиента остаётся пустым: подробности и границы — в docker_env_test.go.
+	if len(commands[1].Env) != 0 {
+		t.Errorf("окружение процесса docker должно быть пустым, получено %v", commands[1].Env)
+	}
+
+	if got := strings.Join(commands[1].Args, " "); !strings.Contains(got, "-e NGINX_HOST=localhost") {
+		t.Errorf("переменная не ушла контейнеру: %s", got)
 	}
 }
 

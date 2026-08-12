@@ -138,7 +138,8 @@ commands: # list of parallel command chains
   and are skipped during execution. Default: `false`.
 - `env: { KEY: value }` — environment variables for this command. They are **added to** the environment `parallel`
   itself runs with, not a replacement for it, so there is no need to restate `PATH`. On a key collision the value from
-  the config wins. See the caveat in [Docker mode](#docker-mode) for `docker` commands.
+  the config wins. For `docker` commands the variables are passed to the **container** — see
+  [Docker mode](#docker-mode).
 - `format.cmdName` — display name template. Supports placeholders:
     - `%CMD_NAME%` — command name (either `Name` or `Cmd`)
     - `%CMD_ARGS%` — arguments joined by space
@@ -160,11 +161,25 @@ When `docker` section is used, the tool builds the final `docker` command for yo
 `removeAfterAll: false`), applies `pull` policy and ports, and always runs with `pipe: true` for live logs. Because of
 this, Docker commands start concurrently and the chain waits for them to finish.
 
-> **`env` caveat in Docker mode.** Variables are applied to the `docker` *client* process, not to
-> the container — no `-e` flag is added to the generated command. That is useful for client-side
-> variables such as `DOCKER_HOST`, but `APP_ENV` will **not** appear inside the container. To pass
-> variables to the container, use the regular form with explicit arguments:
-> `cmd: [ 'docker', 'run', '--rm', '-e', 'APP_ENV=dev', 'nginx' ]`.
+`env` is turned into `-e KEY=VALUE` arguments, so the variables reach the **container** rather
+than the `docker` client process:
+
+```yaml
+commands:
+  services:
+    cache:
+      docker:
+        image:
+          name: redis
+        ports: [ '6379:6379' ]
+      env:
+        REDIS_ARGS: '--save 60 1'
+```
+
+builds `docker run --name cache --rm -p 6379:6379 -e REDIS_ARGS=--save 60 1 redis:latest`.
+Keys are sorted, and the flags always precede the image name — everything after the image would
+be taken by `docker` as the container command. To set a variable for the `docker` client itself
+(`DOCKER_HOST` and friends), export it in the shell that starts `parallel`.
 
 Example of disabling commands (works for both regular and docker forms):
 

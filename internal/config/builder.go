@@ -116,6 +116,17 @@ func (b *FlowBuilder) createDockerCommand(cmdName string, cmdRaw command) flow.C
 		args = append(args, `-p`, port)
 	}
 
+	// Переменные уходят контейнеру флагом -e, а не окружению процесса docker.
+	// Клиент docker собственное окружение контейнеру не передаёт, поэтому
+	// заполнение Env здесь означало бы, что заданное пользователем рядом с
+	// секцией docker не доходит никуда.
+	//
+	// Флаги обязаны стоять до имени образа: всё после него docker трактует как
+	// команду контейнера.
+	for _, pair := range envPairs(cmdRaw.Env) {
+		args = append(args, `-e`, pair)
+	}
+
 	imageTag := cmdRaw.Docker.Image.Tag
 	if imageTag == `` {
 		imageTag = `latest`
@@ -131,8 +142,8 @@ func (b *FlowBuilder) createDockerCommand(cmdName string, cmdRaw command) flow.C
 		Dir:     cmdRaw.Dir,
 		Pipe:    true,
 		Disable: cmdRaw.Disable,
-		Env:     envPairs(cmdRaw.Env),
-		Format:  flow.Format{CmdName: cmdRaw.Format.CmdName},
+		// Env намеренно пуст: переменные уже ушли в аргументы флагами -e.
+		Format: flow.Format{CmdName: cmdRaw.Format.CmdName},
 	}
 }
 
