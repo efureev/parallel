@@ -6,8 +6,6 @@ import (
 )
 
 func TestParseFlags(t *testing.T) {
-	defaultConfigPath := ".parallelrc.yaml"
-
 	tests := []struct {
 		name          string
 		args          []string
@@ -22,9 +20,11 @@ func TestParseFlags(t *testing.T) {
 			expectedError: "",
 		},
 		{
+			// Пустой путь означает «искать самостоятельно»: имя файла и подъём
+			// по дереву — забота слоя config, а не разбора флагов.
 			name:          "missing config flag",
 			args:          []string{},
-			expectedPath:  defaultConfigPath,
+			expectedPath:  "",
 			expectedError: "",
 		},
 		{

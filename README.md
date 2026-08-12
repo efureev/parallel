@@ -31,11 +31,17 @@ The binary will be placed at `$(go env GOPATH)/bin/parallel`.
 
 ## Quick start
 
-If you have a configuration file `.parallelrc.yaml` in the working directory:
+If you have a configuration file `.parallelrc.yaml` (or `.parallelrc.yml`) in the working
+directory — or in any directory above it:
 
 ```shell
 parallel
 ```
+
+The lookup walks up the directory tree the way `git` finds its config, so a config committed at
+the project root works from any subdirectory. The nearest directory wins, and `.yaml` is
+preferred over `.yml` within the same directory. Relative `dir` values are resolved against the
+file that was found, so the whole configuration stays position-independent.
 
 If the configuration file is located elsewhere:
 
@@ -52,7 +58,8 @@ parallel -f examples/full.yaml    # env, dir, disable and the Docker mode
 
 Flags are supported currently:
 
-- `-f` — path to YAML config (defaults to `.parallelrc.yaml`)
+- `-f` — path to YAML config; if omitted, `.parallelrc.yaml` / `.parallelrc.yml` is looked up
+  in the current directory and every parent
 - `-log-level` — `debug`, `info` (default), `warn` or `error`
 - `-v`, `--version` — version info
 - `-h`, `--help` — usage
@@ -311,9 +318,10 @@ commands:
 - A whole shell line is written in `cmd` (with a pipe or `&&`) and the command is not found
     - `cmd` is a program plus its arguments, not a shell line. Invoke the shell explicitly:
       `cmd: [ 'sh', '-c', 'a && b' ]`
-- Configuration is not found when running from a subdirectory
-    - Lookup happens in the current directory only, and only for the exact name `.parallelrc.yaml`
-      (the `.yml` extension does not match). Pass the path explicitly with `-f`
+- Configuration is not found
+    - The error lists the names that were searched. Note that `-f` is taken literally and is
+      never searched for upwards: a typo in `-f` must fail rather than silently pick up someone
+      else's config from a parent directory
 - Docker command keeps running after Ctrl+C
     - The tool sends signal to the process group; ensure your containerized process handles `SIGTERM` and stops promptly
 - YAML error: “invalid flow configuration”
@@ -323,7 +331,8 @@ commands:
 
 Starting with `v1.0.0` the following is frozen and will not change without a `v2`:
 
-- **CLI flags** — `-f <path>`, `-v`, `--version`; the default config path `.parallelrc.yaml`.
+- **CLI flags** — `-f <path>`, `-v`, `--version`; the default config name `.parallelrc.yaml`
+  (`.parallelrc.yml` is also accepted), looked up in the current directory and its parents.
 - **Exit codes** — `0` on success; `1` on a startup or configuration error; a failing command's
   own exit status is passed through.
 - **Configuration schema** — the top-level `commands` key and the command fields `cmd`, `dir`,

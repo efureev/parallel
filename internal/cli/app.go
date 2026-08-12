@@ -3,8 +3,10 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/efureev/parallel/internal/buildinfo"
@@ -22,10 +24,46 @@ const (
 	exitFailure = 1
 )
 
+// resolveConfigPath возвращает путь к конфигурации: заданный флагом -f как есть
+// либо найденный подъёмом по дереву каталогов.
+//
+// Явный путь не ищется: опечатка в -f должна давать ошибку, а не приводить
+// к тихому запуску чужой конфигурации из родительского каталога.
+func resolveConfigPath(configPath string, logger ui.Logger) (string, error) {
+	if configPath != "" {
+		return configPath, nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("determining current directory: %w", err)
+	}
+
+	found, err := config.Discover(cwd)
+	if err != nil {
+		return "", err
+	}
+
+	// Найденный не под ногами файл стоит показать: от его расположения зависит
+	// разрешение относительных путей в dir.
+	if filepath.Dir(found) != cwd {
+		logger.Debug("Using configuration from a parent directory", ui.F("path", found))
+	}
+
+	return found, nil
+}
+
 func initializeApp(configPath string, logger ui.Logger) (*flow.Flow, error) {
+	resolved, err := resolveConfigPath(configPath, logger)
+	if err != nil {
+		logger.Error(err, "Failed to locate configuration file")
+
+		return nil, err
+	}
+
 	loader := config.NewFileLoader(config.YamlFileMarshaller{})
 
-	configData, err := loader.Load(configPath)
+	configData, err := loader.Load(resolved)
 	if err != nil {
 		logger.Error(err, "Failed to load configuration file")
 

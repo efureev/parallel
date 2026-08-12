@@ -11,11 +11,8 @@ import (
 	"github.com/efureev/parallel/internal/ui"
 )
 
-// Значения по умолчанию.
-const (
-	defaultConfigPath = ".parallelrc.yaml"
-	defaultLogLevel   = "info"
-)
+// defaultLogLevel — уровень журналирования, если -log-level не задан.
+const defaultLogLevel = "info"
 
 var (
 	// ErrEmptyConfigPath — флаг -f получил пустое значение.
@@ -30,6 +27,9 @@ var (
 
 // Config хранит параметры запуска, разобранные из аргументов командной строки.
 type Config struct {
+	// ConfigFilePath пуст, если флаг -f не задан. Пустое значение означает
+	// «искать конфигурацию самостоятельно», а не «взять файл в текущем
+	// каталоге»: путь определяет слой config, поднимаясь по дереву каталогов.
 	ConfigFilePath   string
 	VersionRequested bool
 	LogLevel         ui.Level
@@ -52,19 +52,34 @@ Usage:
   parallel [flags]
 
 Flags:
-  -f <path>          path to the YAML configuration file (default ".parallelrc.yaml")
+  -f <path>          path to the YAML configuration file. If omitted, ".parallelrc.yaml"
+                     (or ".parallelrc.yml") is looked up in the current directory and
+                     every parent directory, the way git finds its config
   -log-level <level> debug, info, warn or error (default "info")
   -v, --version      show version information and exit
   -h, --help         show this help and exit
 
 Examples:
-  parallel                            # use .parallelrc.yaml from the current directory
+  parallel                            # find .parallelrc.yaml here or in a parent directory
   parallel -f examples/basic.yaml     # use an explicit configuration file
   parallel -log-level debug           # show what the tool is doing internally
 
 Documentation: https://github.com/efureev/parallel
 `)
 	}
+}
+
+// explicitlySet сообщает, присутствовал ли флаг в аргументах.
+func explicitlySet(fs *flag.FlagSet, name string) bool {
+	found := false
+
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+
+	return found
 }
 
 // ParseFlags разбирает аргументы командной строки и возвращает конфигурацию.
@@ -80,7 +95,7 @@ func ParseFlags(opts ...Option) (*Config, error) {
 		logLevel string
 	)
 
-	fs.StringVar(&cfg.ConfigFilePath, "f", defaultConfigPath, "Path to YAML configuration file")
+	fs.StringVar(&cfg.ConfigFilePath, "f", "", "Path to YAML configuration file")
 	fs.StringVar(&logLevel, "log-level", defaultLogLevel, "Log level: debug, info, warn, error")
 	// Support both -v and -version flags
 	fs.BoolVar(&cfg.VersionRequested, "v", false, "Show version information and exit")
@@ -110,8 +125,10 @@ func ParseFlags(opts ...Option) (*Config, error) {
 		return nil, fmt.Errorf("parsing flags: %w", err)
 	}
 
-	// Validate the config
-	if cfg.ConfigFilePath == "" {
+	// Пустой путь допустим только если -f не передавали вовсе: тогда файл ищется
+	// автоматически. Явное `-f ""` — ошибка, и отличить один случай от другого
+	// можно лишь по тому, посещал ли разборщик этот флаг.
+	if explicitlySet(fs, "f") && cfg.ConfigFilePath == "" {
 		return nil, ErrEmptyConfigPath
 	}
 
