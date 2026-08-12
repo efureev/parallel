@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/efureev/reggol"
@@ -29,17 +30,39 @@ type OutputHandler func(chainNameStyleText, cmdName, content string, counter int
 
 // CommandOutput — заготовки имён для печати одной команды.
 type CommandOutput struct {
+	// ChainName — имя цепочки в верхнем регистре, без раскраски.
 	ChainName string
-	CmdName   string
+	// CmdName — отображаемое имя команды.
+	CmdName string
+	// Header — раскрашенный заголовок вида «CHAIN>» для блочного вывода.
+	Header string
 }
 
 // OutputFormatter форматирует и печатает информацию о командах.
+//
+// Палитра и готовый разделитель принадлежат форматтеру: раскраска — забота
+// этого слоя, и вычислять её на каждую строку вывода незачем.
 type OutputFormatter struct {
-	lgr *reggol.Logger
+	lgr     Logger
+	palette *Palette
+	divider string
 }
 
-func NewOutputFormatter(lgr *reggol.Logger) *OutputFormatter {
-	return &OutputFormatter{lgr: lgr}
+// newOutputFormatter собирает форматтер. Решение о раскраске приходит снаружи,
+// от того же назначения вывода, что и у логгера — см. NewOutput.
+func newOutputFormatter(lgr Logger, colored bool) *OutputFormatter {
+	palette := NewPalette(true, colored)
+
+	return &OutputFormatter{
+		lgr:     lgr,
+		palette: palette,
+		divider: palette.wrapStyle(reggol.ColorFgMagenta|reggol.ColorFgBright, DividerSymbol),
+	}
+}
+
+// Divider возвращает готовый раскрашенный разделитель.
+func (o *OutputFormatter) Divider() string {
+	return o.divider
 }
 
 // FormatChainInfo готовит имена цепочки и команды для печати.
@@ -49,26 +72,27 @@ func (o *OutputFormatter) FormatChainInfo(chain *flow.CommandChain, cmd flow.Com
 		return &CommandOutput{
 			ChainName: "",
 			CmdName:   CommandDisplayName(cmd),
+			Header:    DividerSymbol,
 		}
 	}
 
+	name := strings.ToUpper(chain.Name)
+
 	return &CommandOutput{
-		ChainName: strings.ToUpper(chain.Name),
+		ChainName: name,
 		CmdName:   CommandDisplayName(cmd),
+		Header:    o.palette.Wrap(chain.ColorIdx, name+DividerSymbol),
 	}
 }
 
 // ChainPrefix возвращает форматированный префикс с именем цепочки и разделителем.
 // Если цепочка не определена, возвращается пустая строка (вывод без раскраски).
-func ChainPrefix(chain *flow.CommandChain) string {
+func (o *OutputFormatter) ChainPrefix(chain *flow.CommandChain) string {
 	if chain == nil {
 		return ""
 	}
 
-	chainName := strings.ToUpper(chain.Name)
-	div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(DividerSymbol)
-
-	return chain.Color.Wrap(chainName) + ` ` + div
+	return o.palette.Wrap(chain.ColorIdx, strings.ToUpper(chain.Name)) + ` ` + o.divider
 }
 
 // CommandDisplayName разворачивает шаблон отображаемого имени команды.
@@ -97,38 +121,16 @@ func FullDisplayName(chainName string, cmd flow.Command) string {
 	return fmt.Sprintf("%s > %s", chainName, CommandDisplayName(cmd))
 }
 
-// streamLines читает строки из reader в отдельной горутине и публикует их в каналы.
-// Чтение блокирующее, поэтому вынесено из основного цикла: это позволяет немедленно
-// прервать обработку при отмене ctx, не дожидаясь следующей строки от «молчащего»
-// процесса (пайп закрывается при завершении/Kill).
-func streamLines(ctx context.Context, reader *bufio.Reader) (<-chan string, <-chan error) {
-	lines := make(chan string)
-	errCh := make(chan error, 1)
-
-	go func() {
-		for {
-			str, err := reader.ReadString('\n')
-			if len(str) > 0 {
-				select {
-				case lines <- strings.TrimSuffix(str, NewlineChar):
-				case <-ctx.Done():
-					return
-				}
-			}
-
-			if err != nil {
-				errCh <- err
-
-				return
-			}
-		}
-	}()
-
-	return lines, errCh
-}
-
 // HandleOutput читает строки из reader и передаёт их в handler с форматированием
 // имени цепочки и команды.
+//
+// Чтение идёт прямо в этом цикле, без горутины-посредника и канала между ней и
+// обработчиком. Раньше посредник был нужен, чтобы прервать блокирующий
+// ReadString по отмене контекста, и стоил это двух переключений горутин на
+// каждую строку вывода — находка P1. После фазы 3 отмена чтения перестала быть
+// штатным путём: вывод заканчивается сам по EOF, когда процесс закрывает пайп,
+// а аварийная остановка выполняется закрытием пайпа снаружи (см. runner).
+// Закрытый пайп разблокирует ReadString не хуже, чем это делал select.
 func (o *OutputFormatter) HandleOutput(
 	ctx context.Context,
 	reader *bufio.Reader,
@@ -136,27 +138,36 @@ func (o *OutputFormatter) HandleOutput(
 	cmd flow.Command,
 	handler OutputHandler,
 ) error {
-	chainNameStyleTxt := ChainPrefix(chain)
+	chainNameStyleTxt := o.ChainPrefix(chain)
 	cmdName := CommandDisplayName(cmd)
-	lines, errCh := streamLines(ctx, reader)
 
 	counter := 0
 
 	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case line := <-lines:
-			handler(chainNameStyleTxt, cmdName, line, counter)
+		line, err := reader.ReadString('\n')
+
+		if len(line) > 0 {
+			handler(chainNameStyleTxt, cmdName, strings.TrimSuffix(line, NewlineChar), counter)
 			counter++
-		case err := <-errCh:
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-
-			o.lgr.Err(err).Push()
-
-			return err
 		}
+
+		if err == nil {
+			continue
+		}
+
+		// EOF — штатное окончание вывода. Закрытый пайп — аварийная остановка,
+		// о которой уже сообщил тот, кто её затеял. Отменённый контекст — то же
+		// самое. Ни один из трёх случаев ошибкой чтения не является.
+		if errors.Is(err, io.EOF) || errors.Is(err, os.ErrClosed) {
+			return nil
+		}
+
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+
+		o.lgr.Error(err, "output read failed")
+
+		return err
 	}
 }

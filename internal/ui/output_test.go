@@ -4,13 +4,17 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"errors"
-	"io"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/efureev/parallel/internal/flow"
 )
+
+// discardFormatter отдаёт форматтер без раскраски поверх отбрасывающего логгера.
+func discardFormatter() *OutputFormatter {
+	return NewDiscardOutput().Formatter()
+}
 
 func TestCommandDisplayName(t *testing.T) {
 	cmd := flow.Command{Cmd: "echo", Args: []string{"hello"}}
@@ -41,13 +45,13 @@ func TestFullDisplayName(t *testing.T) {
 }
 
 func TestChainPrefix_NilChain(t *testing.T) {
-	if got := ChainPrefix(nil); got != "" {
+	if got := discardFormatter().ChainPrefix(nil); got != "" {
 		t.Fatalf("expected empty prefix for nil chain, got %q", got)
 	}
 }
 
 func TestOutputFormatter_HandleOutputBasic(t *testing.T) {
-	formatter := NewOutputFormatter(Logger())
+	formatter := discardFormatter()
 
 	cmd := flow.Command{Cmd: "echo", Args: []string{"hello"}}
 
@@ -72,43 +76,58 @@ func TestOutputFormatter_HandleOutputBasic(t *testing.T) {
 	}
 }
 
-// TestOutputFormatter_HandleOutputCanceled проверяет, что чтение вывода
-// прерывается отменой контекста, даже если процесс «молчит» (reader блокируется).
-func TestOutputFormatter_HandleOutputCanceled(t *testing.T) {
-	formatter := NewOutputFormatter(Logger())
+// TestOutputFormatter_HandleOutputUnblocksOnClose проверяет, что чтение вывода
+// прерывается, даже если процесс «молчит» и ReadString заблокирован.
+//
+// Гарантия та же, что и прежде, но механизм другой. Раньше блокирующее чтение
+// жило в отдельной горутине и прерывалось отменой контекста через select —
+// ценой двух переключений горутин на каждую строку (находка P1). Теперь чтение
+// идёт прямо в цикле, а аварийная остановка выполняется закрытием пайпа:
+// закрытый дескриптор разблокирует ReadString не хуже, чем select.
+func TestOutputFormatter_HandleOutputUnblocksOnClose(t *testing.T) {
+	formatter := discardFormatter()
 
 	cmd := flow.Command{Cmd: "sleep", Args: []string{"100"}}
 
-	// io.Pipe без записи моделирует молчащий процесс: ReadString блокируется.
-	pr, pw := io.Pipe()
-	defer pw.Close()
+	// os.Pipe без записи моделирует молчащий процесс.
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+
+	defer func() { _ = pw.Close() }()
 
 	reader := bufio.NewReader(pr)
 
-	ctx, cancel := context.WithCancel(t.Context())
 	handler := func(chainNameStyleText, cmdName, content string, counter int) {
 		t.Errorf("handler must not be called, got content=%q", content)
 	}
 
 	done := make(chan error, 1)
+
 	go func() {
-		done <- formatter.HandleOutput(ctx, reader, nil, cmd, handler)
+		done <- formatter.HandleOutput(t.Context(), reader, nil, cmd, handler)
 	}()
 
-	cancel()
+	// Даём чтению заблокироваться, затем обрываем его закрытием пайпа.
+	time.Sleep(20 * time.Millisecond)
+
+	if err := pr.Close(); err != nil {
+		t.Fatalf("close reader: %v", err)
+	}
 
 	select {
 	case err := <-done:
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("expected context.Canceled, got %v", err)
+		if err != nil {
+			t.Fatalf("закрытие пайпа не должно считаться ошибкой, получено %v", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("HandleOutput did not return after context cancellation")
+		t.Fatal("HandleOutput не вернулся после закрытия пайпа")
 	}
 }
 
 func TestOutputFormatter_FormatChainInfo(t *testing.T) {
-	formatter := NewOutputFormatter(Logger())
+	formatter := discardFormatter()
 	cmd := flow.Command{Name: "worker", Cmd: "echo"}
 
 	got := formatter.FormatChainInfo(nil, cmd)

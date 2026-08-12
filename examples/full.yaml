@@ -1,0 +1,57 @@
+# Пример со всеми возможностями схемы конфигурации.
+#
+# Запуск:  parallel -f examples/full.yaml
+#
+# Показывает: смешение pipe и не-pipe команд в одной цепочке, рабочий каталог,
+# переменные окружения, отключение команды и docker-режим.
+
+commands:
+  # Смешанная цепочка. Не-pipe команды идут последовательно, pipe-команды
+  # стартуют сразу и работают параллельно с ними; цепочка ждёт всех.
+  app:
+    migrate:
+      cmd: [ 'echo', 'running migrations' ]
+
+    serve:
+      pipe: true
+      cmd: [ 'sh', '-c', 'for i in 1 2 3; do echo "serving request $i"; sleep 1; done' ]
+      format:
+        cmdName: '%CMD_NAME%'
+
+    health-check:
+      pipe: true
+      cmd: [ 'sh', '-c', 'sleep 2; echo "health: ok"' ]
+
+  # Переменные окружения и рабочий каталог.
+  #
+  # env дополняет окружение, с которым запущен сам parallel, а не заменяет его:
+  # PATH и прочее перечислять не нужно. При совпадении ключей побеждает
+  # значение из конфигурации.
+  worker:
+    env-demo:
+      pipe: true
+      cmd: [ 'sh', '-c', 'echo "APP_ENV=$APP_ENV PORT=$PORT"; pwd' ]
+      dir: '/tmp'
+      env:
+        APP_ENV: development
+        PORT: '8080'
+
+  # disable: команда остаётся в конфигурации и видна в предпросмотре Flow,
+  # но не запускается.
+  optional:
+    disabled-command:
+      disable: true
+      cmd: [ 'echo', 'этого вывода не будет' ]
+
+    # Docker-режим: parallel сам собирает команду docker. Такие команды всегда
+    # выполняются как pipe: true. Отключено, чтобы пример не требовал докера.
+    nginx:
+      disable: true
+      docker:
+        image:
+          name: 'nginx'
+          tag: 'alpine'
+          # pull: 'always'        # по умолчанию не указывается
+        ports: [ '127.0.0.1:8080:80' ]
+        # removeAfterAll: false   # по умолчанию добавляется --rm
+        # cmd: 'exec'             # по умолчанию 'run'

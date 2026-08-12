@@ -6,8 +6,15 @@ import (
 	"fmt"
 	"os"
 
-	"gopkg.in/yaml.v3"
+	"github.com/goccy/go-yaml"
+	"github.com/goccy/go-yaml/ast"
+	"github.com/goccy/go-yaml/parser"
+
+	"github.com/efureev/parallel/internal/flow"
 )
+
+// commandsKey — верхнеуровневый ключ конфигурации.
+const commandsKey = "commands"
 
 // FileMarshaller разбирает содержимое файла конфигурации.
 type FileMarshaller interface {
@@ -30,11 +37,12 @@ type dockerCommand struct {
 }
 
 type command struct {
-	Cmd     []string
+	Cmd     []string `yaml:"cmd"`
 	Docker  *dockerCommand
 	Dir     string
 	Pipe    bool
-	Disable bool `yaml:"disable"`
+	Disable bool              `yaml:"disable"`
+	Env     map[string]string `yaml:"env"`
 	Format  format
 }
 
@@ -68,12 +76,12 @@ func NewFileLoader(marshaller FileMarshaller) *FileLoader {
 func (l *FileLoader) Load(filePath string) (Data, error) {
 	fileContent, err := l.loadFile(filePath)
 	if err != nil {
-		return Data{}, fmt.Errorf("failed to load file: %w", err)
+		return Data{}, err
 	}
 
 	rawConfig, err := l.marshaller.Unmarshal(fileContent)
 	if err != nil {
-		return Data{}, fmt.Errorf("failed to decode config file: %w", err)
+		return Data{}, fmt.Errorf("%w %s: %w", ErrConfigDecode, filePath, err)
 	}
 
 	return rawConfig, nil
@@ -81,16 +89,16 @@ func (l *FileLoader) Load(filePath string) (Data, error) {
 
 func (l *FileLoader) loadFile(filePath string) ([]byte, error) {
 	if filePath == `` {
-		return nil, fmt.Errorf("missing config file path")
+		return nil, ErrEmptyConfigPath
 	}
 
-	if !PathExists(filePath) {
-		return nil, fmt.Errorf("config file not found: %s", filePath)
+	if !flow.PathExists(filePath) {
+		return nil, fmt.Errorf("%w: %s", ErrConfigNotFound, filePath)
 	}
 
 	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read config file %s: %w", filePath, err)
+		return nil, fmt.Errorf("%w %s: %w", ErrConfigRead, filePath, err)
 	}
 
 	return fileContent, nil
@@ -101,55 +109,55 @@ type YamlFileMarshaller struct {
 }
 
 func (l YamlFileMarshaller) Unmarshal(b []byte) (Data, error) {
-	var root yaml.Node
-	if err := yaml.Unmarshal(b, &root); err != nil {
+	file, err := parser.ParseBytes(b, 0)
+	if err != nil {
+		// Ошибка разбора от goccy уже содержит строку, колонку и фрагмент исходника.
 		return Data{}, err
 	}
 
-	return parseData(&root)
+	if len(file.Docs) == 0 || file.Docs[0].Body == nil {
+		return Data{}, nil
+	}
+
+	return parseData(file.Docs[0].Body)
 }
 
 // parseData обходит YAML-AST вместо декодирования в мапы, чтобы порядок
 // объявления цепочек и команд сохранялся детерминированно.
-func parseData(root *yaml.Node) (Data, error) {
+//
+// Это требование, а не вкус: порядок виден пользователю в предпросмотре Flow
+// и в раскраске цепочек, а обход Go-мапы рандомизирован. Инвариант закреплён
+// тестом TestYamlMarshaller_PreservesOrder.
+func parseData(body ast.Node) (Data, error) {
 	var cfg Data
 
-	doc := root
-	if doc.Kind == yaml.DocumentNode {
-		if len(doc.Content) == 0 {
-			return cfg, nil
-		}
-
-		doc = doc.Content[0]
-	}
-
-	if doc.Kind != yaml.MappingNode {
+	root := mappingValues(body)
+	if root == nil {
 		return cfg, nil
 	}
 
-	commandsNode := mappingValue(doc, "commands")
-	if commandsNode == nil || commandsNode.Kind != yaml.MappingNode {
+	commandsNode := lookup(root, commandsKey)
+	if commandsNode == nil {
 		return cfg, nil
 	}
 
-	for i := 0; i+1 < len(commandsNode.Content); i += 2 {
-		chainName := commandsNode.Content[i].Value
-		chainNode := commandsNode.Content[i+1]
+	chains := mappingValues(commandsNode)
+	if chains == nil {
+		return cfg, nil
+	}
 
-		chain := ChainConfig{Name: chainName}
+	for _, chainEntry := range chains {
+		chain := ChainConfig{Name: chainEntry.Key.GetToken().Value}
 
-		if chainNode.Kind == yaml.MappingNode {
-			for j := 0; j+1 < len(chainNode.Content); j += 2 {
-				cmdName := chainNode.Content[j].Value
-				cmdNode := chainNode.Content[j+1]
+		for _, cmdEntry := range mappingValues(chainEntry.Value) {
+			cmdName := cmdEntry.Key.GetToken().Value
 
-				var spec command
-				if err := cmdNode.Decode(&spec); err != nil {
-					return Data{}, fmt.Errorf("failed to decode command %q in chain %q: %w", cmdName, chainName, err)
-				}
-
-				chain.Commands = append(chain.Commands, NamedCommand{Name: cmdName, Spec: spec})
+			var spec command
+			if err := yaml.NodeToValue(cmdEntry.Value, &spec); err != nil {
+				return Data{}, decodeError(cmdEntry.Value, cmdName, chain.Name, err)
 			}
+
+			chain.Commands = append(chain.Commands, NamedCommand{Name: cmdName, Spec: spec})
 		}
 
 		cfg.Chains = append(cfg.Chains, chain)
@@ -158,13 +166,39 @@ func parseData(root *yaml.Node) (Data, error) {
 	return cfg, nil
 }
 
-// mappingValue возвращает значение по ключу в mapping-узле либо nil, если ключа нет.
-func mappingValue(m *yaml.Node, key string) *yaml.Node {
-	for i := 0; i+1 < len(m.Content); i += 2 {
-		if m.Content[i].Value == key {
-			return m.Content[i+1]
+// mappingValues приводит узел к списку пар «ключ-значение» в исходном порядке.
+//
+// goccy представляет отображение с единственным ключом как MappingValueNode,
+// а не как MappingNode — оба случая обрабатываются здесь, иначе конфигурация
+// из одной цепочки разбиралась бы иначе, чем из нескольких.
+func mappingValues(n ast.Node) []*ast.MappingValueNode {
+	switch node := n.(type) {
+	case *ast.MappingNode:
+		return node.Values
+	case *ast.MappingValueNode:
+		return []*ast.MappingValueNode{node}
+	default:
+		return nil
+	}
+}
+
+// lookup возвращает значение по ключу либо nil, если ключа нет.
+func lookup(values []*ast.MappingValueNode, key string) ast.Node {
+	for _, v := range values {
+		if v.Key.GetToken().Value == key {
+			return v.Value
 		}
 	}
 
 	return nil
+}
+
+// decodeError дополняет ошибку разбора именами команды и цепочки.
+//
+// Позицию не приписываем: goccy уже отдаёт её точнее — с номером строки,
+// колонкой и фрагментом исходника, — а вторая пара чисел рядом только сбивала бы
+// с толку. От нас требуется контекст, которого библиотека знать не может:
+// в какой команде какой цепочки произошла ошибка.
+func decodeError(_ ast.Node, cmdName, chainName string, err error) error {
+	return fmt.Errorf("command %q in chain %q: %w", cmdName, chainName, err)
 }

@@ -1,44 +1,61 @@
 package config
 
 import (
-	"github.com/efureev/reggol"
+	"sort"
 
 	"github.com/efureev/parallel/internal/flow"
 )
 
-// FlowBuilder собирает доменный Flow из загруженной конфигурации.
-type FlowBuilder struct {
-	lgr *reggol.Logger
+// envPairs переводит карту переменных окружения в упорядоченный список "KEY=VALUE".
+//
+// Сортировка обязательна: обход Go-мапы рандомизирован, а порядок переменных
+// попадает в окружение процесса и в тесты. Недетерминированность здесь стоила бы
+// мигающих прогонов на ровном месте.
+func envPairs(env map[string]string) []string {
+	if len(env) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	pairs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		pairs = append(pairs, k+"="+env[k])
+	}
+
+	return pairs
 }
 
-func NewFlowBuilder(lgr *reggol.Logger) *FlowBuilder {
-	return &FlowBuilder{lgr: lgr}
+// FlowBuilder собирает доменный Flow из загруженной конфигурации.
+//
+// Логгера у билдера нет намеренно: раньше отсутствие ключа commands он сообщал
+// в лог и возвращал пустой Flow — валидный на вид zero value, о проблеме
+// вызывающий не узнавал (находка A6). Теперь это ошибка, а логирование —
+// забота вызывающего слоя.
+type FlowBuilder struct{}
+
+func NewFlowBuilder() *FlowBuilder {
+	return &FlowBuilder{}
 }
 
 // Build преобразует Data в доменную структуру Flow.
 // Порядок цепочек и команд внутри них сохраняется ровно таким, каким он задан в конфигурации.
-func (b *FlowBuilder) Build(data Data) flow.Flow {
+func (b *FlowBuilder) Build(data Data) (flow.Flow, error) {
 	if len(data.Chains) == 0 {
-		b.lgr.Error().Str(`field`, `commands`).Msg(`Missing Config Field`)
-
-		return flow.Flow{}
+		return flow.Flow{}, ErrMissingCommands
 	}
-
-	colorList := flow.GenColors(true)
-
-	var currentColor reggol.TextStyle
 
 	result := &flow.Flow{}
 
-	for _, chainCfg := range data.Chains {
-		currentColor, colorList = colorList[0], colorList[1:]
-		if len(colorList) == 0 {
-			colorList = flow.GenColors(true)
-		}
-
+	for idx, chainCfg := range data.Chains {
 		chain := &flow.CommandChain{
-			Name:  chainCfg.Name,
-			Color: currentColor,
+			Name:     chainCfg.Name,
+			ColorIdx: idx,
 		}
 
 		for _, namedCmd := range chainCfg.Commands {
@@ -55,7 +72,7 @@ func (b *FlowBuilder) Build(data Data) flow.Flow {
 		result.AddChain(chain)
 	}
 
-	return *result
+	return *result, nil
 }
 
 func (b *FlowBuilder) createDockerCommand(cmdName string, cmdRaw command) flow.Command {
@@ -93,6 +110,7 @@ func (b *FlowBuilder) createDockerCommand(cmdName string, cmdRaw command) flow.C
 		Dir:     cmdRaw.Dir,
 		Pipe:    true,
 		Disable: cmdRaw.Disable,
+		Env:     envPairs(cmdRaw.Env),
 		Format:  flow.Format{CmdName: cmdRaw.Format.CmdName},
 	}
 }
@@ -117,6 +135,7 @@ func (b *FlowBuilder) createRegularCommand(cmdName string, cmdRaw command) flow.
 		Dir:     cmdRaw.Dir,
 		Pipe:    cmdRaw.Pipe,
 		Disable: cmdRaw.Disable,
+		Env:     envPairs(cmdRaw.Env),
 		Format:  flow.Format{CmdName: cmdRaw.Format.CmdName},
 	}
 }

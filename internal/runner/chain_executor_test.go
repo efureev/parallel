@@ -34,7 +34,7 @@ func TestChainExecutor_ExecuteParallel(t *testing.T) {
 		atomic.StoreInt32(&stopped, 1)
 	}
 
-	exec := newChainExecutor(ui.Logger(), runner, stopAll)
+	exec := newChainExecutor(ui.NewDiscardLogger(), runner, stopAll)
 
 	chain1 := flow.CommandChain{Name: "c1"}
 	chain1.Add(flow.Command{Cmd: "echo"})
@@ -57,7 +57,7 @@ func TestChainExecutor_CancelContextStopsExecution(t *testing.T) {
 		atomic.StoreInt32(&stopAllCalled, 1)
 	}
 
-	exec := newChainExecutor(ui.Logger(), runner, stopAll)
+	exec := newChainExecutor(ui.NewDiscardLogger(), runner, stopAll)
 
 	chain := flow.CommandChain{Name: "c1"}
 	chain.Add(flow.Command{Cmd: "echo"})
@@ -78,7 +78,7 @@ func TestChainExecutor_CancelContextStopsExecution(t *testing.T) {
 func TestChainExecutor_SkipsDisabledCommands(t *testing.T) {
 	runner := &fakeRunner{}
 
-	exec := newChainExecutor(ui.Logger(), runner, nil)
+	exec := newChainExecutor(ui.NewDiscardLogger(), runner, nil)
 
 	chain := flow.CommandChain{Name: "c1"}
 	chain.Add(flow.Command{Name: "will-skip", Cmd: "echo", Disable: true})
@@ -147,7 +147,7 @@ func TestChainExecutor_PipeConcurrentWithinChain(t *testing.T) {
 	normalSig := make(chan struct{}, 1)
 
 	runner := &fakeRunnerConcurrent{pipeBlockCh: pipeBlock, normalSignalCh: normalSig}
-	exec := newChainExecutor(ui.Logger(), runner, nil)
+	exec := newChainExecutor(ui.NewDiscardLogger(), runner, nil)
 
 	chain := flow.CommandChain{Name: "c1"}
 	chain.Add(flow.Command{Name: "piped", Cmd: "echo", Pipe: true})
@@ -194,7 +194,7 @@ func TestChainExecutor_WaitsForAllPiped(t *testing.T) {
 
 	// Runner will block per command name
 	runner := &fakeRunnerConcurrent{blockByName: map[string]chan struct{}{"p1": pipeBlock1, "p2": pipeBlock2}}
-	exec := newChainExecutor(ui.Logger(), runner, nil)
+	exec := newChainExecutor(ui.NewDiscardLogger(), runner, nil)
 
 	chain := flow.CommandChain{Name: "c1"}
 	chain.Add(flow.Command{Name: "p1", Cmd: "echo", Pipe: true})
@@ -206,8 +206,8 @@ func TestChainExecutor_WaitsForAllPiped(t *testing.T) {
 		done <- exec.ExecuteParallel(context.Background(), []*flow.CommandChain{&chain})
 	}()
 
-	// give some time for goroutines to start
-	time.Sleep(100 * time.Millisecond)
+	// даём горутинам стартовать
+	time.Sleep(30 * time.Millisecond)
 
 	select {
 	case err := <-done:
@@ -221,7 +221,7 @@ func TestChainExecutor_WaitsForAllPiped(t *testing.T) {
 	select {
 	case <-done:
 		t.Fatalf("execution finished before all piped completed")
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(30 * time.Millisecond):
 		// ok
 	}
 

@@ -4,18 +4,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/efureev/reggol"
-
 	"github.com/efureev/parallel/internal/flow"
 )
 
 // FlowReader отвечает за человеко-читаемый вывод структуры Flow,
 // загруженной из YAML-конфигурации.
 type FlowReader struct {
-	lgr *reggol.Logger
+	lgr Logger
 }
 
-func NewFlowReader(lgr *reggol.Logger) *FlowReader {
+func NewFlowReader(lgr Logger) *FlowReader {
 	return &FlowReader{lgr: lgr}
 }
 
@@ -23,13 +21,13 @@ func NewFlowReader(lgr *reggol.Logger) *FlowReader {
 // чтобы было понятно, какие chains и команды будут выполняться.
 func (f *FlowReader) Out(fl *flow.Flow) {
 	if fl == nil {
-		f.lgr.Warn().Msg("Flow is <nil>, nothing to show")
+		f.lgr.Warn("Flow is <nil>, nothing to show")
 
 		return
 	}
 
 	if len(fl.Chains) == 0 {
-		f.lgr.Warn().Msg("Flow has no chains defined")
+		f.lgr.Warn("Flow has no chains defined")
 
 		return
 	}
@@ -70,5 +68,5 @@ func (f *FlowReader) Out(fl *flow.Flow) {
 		}
 	}
 
-	f.lgr.Info().Msg(b.String())
+	f.lgr.Info(b.String())
 }

@@ -5,12 +5,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/efureev/reggol"
 
 	"github.com/efureev/parallel/internal/flow"
 )
@@ -24,24 +21,9 @@ const (
 	benchLineWidth  = 80
 )
 
-// discardLogger собирает логгер с тем же трансформером, что и продакшн,
-// но с выводом в никуда.
-func discardLogger() *reggol.Logger {
-	trans := CreateTransformer()
-
-	out := reggol.NewConsoleWriter(func(w *reggol.ConsoleWriter) {
-		w.Out = io.Discard
-		w.Trans = trans
-	})
-
-	l := reggol.New(out)
-
-	return &l
-}
-
 // benchChainAndCommand возвращает цепочку и команду так же, как их собирает FlowBuilder.
 func benchChainAndCommand() (*flow.CommandChain, flow.Command) {
-	chain := &flow.CommandChain{Name: "bench", Color: reggol.ColorFgCyan}
+	chain := &flow.CommandChain{Name: "bench", ColorIdx: 0}
 	chain.Add(flow.Command{
 		Name: "worker",
 		Cmd:  "echo",
@@ -52,14 +34,16 @@ func benchChainAndCommand() (*flow.CommandChain, flow.Command) {
 	return chain, chain.Commands()[0]
 }
 
-// benchStdoutHandler повторяет stdoutHandler из runner.streamPipes дословно,
-// включая вычисление div на каждой строке: бенчмарк обязан мерить то, что
-// выполняется в проде, а не улучшенную версию.
-func benchStdoutHandler(lgr *reggol.Logger) OutputHandler {
+// benchStdoutHandler повторяет stdoutHandler из runner.streamPipes дословно:
+// бенчмарк обязан мерить то, что выполняется в проде.
+//
+// Разделитель приходит параметром, потому что в проде он вычисляется один раз
+// при создании форматтера. До фазы 2 он собирался заново на каждой строке —
+// это была находка P2, снятая как побочный результат выноса раскраски в ui.
+func benchStdoutHandler(lgr Logger, div string) OutputHandler {
 	return func(chainNameStyleText, cmdName, content string, counter int) {
-		div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(DividerSymbol)
 		cmdNameStyled := fmt.Sprintf(`%s (%d) %s`, cmdName, counter, div)
-		lgr.Log().Blocks(chainNameStyleText, cmdNameStyled, content).Push()
+		lgr.Blocks(chainNameStyleText, cmdNameStyled, content)
 	}
 }
 
@@ -86,13 +70,14 @@ func BenchPayload(lines, width int) []byte {
 // BenchmarkRenderLine мерит стоимость одной строки вывода: форматирование плюс отдача в логгер.
 // Цель находки P2 — убрать аллокацию неизменного разделителя из этого цикла.
 func BenchmarkRenderLine(b *testing.B) {
-	lgr := discardLogger()
+	out := NewDiscardOutput()
+	lgr, formatter := out.Logger(), out.Formatter()
 	chain, cmd := benchChainAndCommand()
 
-	chainStyled := ChainPrefix(chain)
+	chainStyled := formatter.ChainPrefix(chain)
 	cmdName := CommandDisplayName(cmd)
 	content := strings.Repeat("x", benchLineWidth)
-	handler := benchStdoutHandler(lgr)
+	handler := benchStdoutHandler(lgr, formatter.Divider())
 
 	b.ReportAllocs()
 
@@ -106,10 +91,10 @@ func BenchmarkRenderLine(b *testing.B) {
 // BenchmarkHandleOutput мерит сквозной путь вывода: чтение пайпа, канал streamLines,
 // форматирование и запись. Находки P1, P4.
 func BenchmarkHandleOutput(b *testing.B) {
-	lgr := discardLogger()
-	formatter := NewOutputFormatter(lgr)
+	out := NewDiscardOutput()
+	lgr, formatter := out.Logger(), out.Formatter()
 	chain, cmd := benchChainAndCommand()
-	handler := benchStdoutHandler(lgr)
+	handler := benchStdoutHandler(lgr, formatter.Divider())
 	payload := BenchPayload(benchLinesPerOp, benchLineWidth)
 	ctx := context.Background()
 

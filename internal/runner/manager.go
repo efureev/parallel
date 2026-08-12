@@ -11,100 +11,154 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
-	"syscall"
+	"sync/atomic"
 	"time"
-
-	"github.com/efureev/reggol"
 
 	"github.com/efureev/parallel/internal/flow"
 	"github.com/efureev/parallel/internal/ui"
 )
 
-const outputIndentation = "          "
+const (
+	outputIndentation = "          "
+
+	// pipeReadBufferSize — размер буфера чтения вывода команды.
+	//
+	// Дефолтные для bufio 4 КиБ означают частые read(2) на болтливом процессе
+	// (находка P7). 64 КиБ снижают их число на порядок; для CLI лишние
+	// десятки килобайт на команду несущественны.
+	pipeReadBufferSize = 64 * 1024
+)
+
+// newlineBytes — перевод строки в байтовом виде для разбора вывода команд.
+//
+//nolint:gochecknoglobals // неизменяемая константа-литерал, массивом её не объявить
+var newlineBytes = []byte(ui.NewlineChar)
 
 var (
 	ErrCommandExecution = errors.New("command execution failed")
 	ErrPipeCreation     = errors.New("pipe creation failed")
 )
 
-// CommandExecutor описывает внешний API менеджера для выполнения цепочек команд
-// и управления сигналом завершения.
-type CommandExecutor interface {
-	ExecuteParallel(ctx context.Context, chains []*flow.CommandChain) error
-	SetShutdownSignal(sig syscall.Signal)
+// Manager выполняет цепочки команд.
+//
+// Конструктор возвращает конкретный тип, а не интерфейс: интерфейс, объявленный
+// рядом с единственной реализацией, ничего не абстрагирует, зато прячет от
+// потребителя остальные методы (находка A5). Шов для подмены есть там, где он
+// нужен на деле, — CommandRunner на стороне chainExecutor.
+type Manager struct {
+	lgr ui.Logger
+
+	procs *processRegistry
+	// shutdownSig хранит сигнал завершения. Раньше это значение защищал
+	// RWMutex, хотя пишется оно максимум один раз за жизнь процесса (P9).
+	shutdownSig atomic.Value
+
+	output   *ui.OutputFormatter
+	chains   *chainExecutor
+	timeouts Timeouts
 }
 
-type manager struct {
-	lgr *reggol.Logger
+// Option настраивает менеджер при создании.
+type Option func(*Manager)
 
-	procs       *processRegistry
-	shutdownMu  sync.RWMutex
-	shutdownSig syscall.Signal
-
-	output *ui.OutputFormatter
-	chains *chainExecutor
+// WithTimeouts задаёт тайминги завершения процессов.
+// Нужен тестам, чтобы не ждать секундами то, что проверяется миллисекундами.
+func WithTimeouts(t Timeouts) Option {
+	return func(m *Manager) { m.timeouts = t.normalize() }
 }
 
 // NewManager создаёт новый экземпляр менеджера.
-func NewManager(logger *reggol.Logger) CommandExecutor {
-	m := &manager{
-		lgr:         logger,
-		procs:       newProcessRegistry(),
-		shutdownSig: syscall.SIGTERM,
+func NewManager(logger ui.Logger, formatter *ui.OutputFormatter, opts ...Option) *Manager {
+	m := &Manager{
+		lgr:      logger,
+		procs:    newProcessRegistry(),
+		output:   formatter,
+		timeouts: DefaultTimeouts(),
 	}
 
-	m.output = ui.NewOutputFormatter(logger)
+	m.shutdownSig.Store(defaultShutdownSignal())
+
+	for _, opt := range opts {
+		opt(m)
+	}
+
 	m.chains = newChainExecutor(logger, m, m.stopAllCommands)
 
 	return m
 }
 
-// SetShutdownSignal позволяет задать сигнал, который будет отправляться дочерним процессам
+// SetShutdownSignal задаёт сигнал, который будет отправляться дочерним процессам
 // при завершении работы приложения (например, SIGINT / SIGTERM / SIGQUIT).
-func (m *manager) SetShutdownSignal(sig syscall.Signal) {
-	m.shutdownMu.Lock()
-	defer m.shutdownMu.Unlock()
-
-	m.shutdownSig = sig
-}
-
-func (m *manager) getShutdownSignal() syscall.Signal {
-	m.shutdownMu.RLock()
-	defer m.shutdownMu.RUnlock()
-
-	if m.shutdownSig == 0 {
-		return syscall.SIGTERM
+//
+// Принимает os.Signal, а не syscall.Signal: платформенный тип в кросс-платформенном
+// API — протечка (находка A9). Перевод в платформенное представление выполняют
+// build-tagged файлы, знающие, что на их платформе вообще доставимо.
+func (m *Manager) SetShutdownSignal(sig os.Signal) {
+	if sig == nil {
+		return
 	}
 
-	return m.shutdownSig
+	m.shutdownSig.Store(sig)
 }
 
-func (m *manager) stopAllCommands() {
+func (m *Manager) getShutdownSignal() os.Signal {
+	if v, ok := m.shutdownSig.Load().(os.Signal); ok && v != nil {
+		return v
+	}
+
+	return defaultShutdownSignal()
+}
+
+func (m *Manager) stopAllCommands() {
 	if m.procs == nil {
 		return
 	}
 
-	m.procs.stopAll(m.lgr, m.getShutdownSignal())
+	m.procs.stopAll(m.lgr, m.getShutdownSignal(), m.timeouts.ForceKill)
 }
 
-// supervise регистрирует процесс в registry, ждёт его завершения либо отмены контекста,
-// отправляет сигнал завершения группе и принудительно убивает её по таймауту.
-// Владельцем cmd.Wait() является именно эта функция: результат отдаётся через канал,
-// а waitDone закрывается ровно один раз; registry лишь ждёт waitDone и сам Wait не вызывает.
+// KillAll немедленно убивает все запущенные группы процессов, не давая им
+// времени на завершение.
 //
-// onCancel (если задан) вызывается сразу при обнаружении отмены контекста — например,
-// чтобы остановить чтение вывода. onDone (если задан) вызывается после полного выхода
-// процесса в обеих ветках — например, чтобы дождаться завершения output-горутин.
+// Это реакция на повторный сигнал от пользователя: первый Ctrl+C просит
+// остановиться вежливо, второй означает «немедленно». Без него прервать
+// ожидание было нечем (находка C3).
+func (m *Manager) KillAll() {
+	if m.procs == nil {
+		return
+	}
+
+	m.procs.killAll(m.lgr)
+}
+
+// supervise регистрирует процесс в registry, ждёт его полного завершения либо
+// отмены контекста, отправляет сигнал завершения группе и принудительно убивает
+// её по таймауту.
 //
-// Возвращает ошибку cmd.Wait() при штатном завершении либо ctx.Err() при отмене.
-func (m *manager) supervise(
+// waitFn описывает, что значит «команда завершилась полностью». Для команды с
+// пайпами это «дочитать вывод до EOF, затем cmd.Wait()», и порядок здесь
+// принципиален: cmd.Wait() закрывает пайпы, как только процесс вышел, поэтому
+// вызывать его до окончания чтения — значит терять хвост вывода. Документация
+// os/exec говорит об этом прямо: «it is incorrect to call Wait before all reads
+// from the pipe have completed». Именно на этом терялись последние ~60 строк
+// вывода каждой piped-команды (находка C10).
+//
+// abandonOutput — аварийный выход: принудительно прекращает чтение, если после
+// убийства группы EOF так и не пришёл (открытый конец пайпа мог остаться у
+// отцепившегося внука). Штатным способом завершения он больше не является.
+//
+// Владельцем ожидания является именно эта функция: результат отдаётся через
+// канал, а waitDone закрывается ровно один раз; registry лишь ждёт waitDone.
+func (m *Manager) supervise(
 	ctx context.Context,
 	cmd *exec.Cmd,
 	chainName string,
 	command flow.Command,
-	onCancel, onDone func(),
+	waitFn func() error,
+	abandonOutput func(),
 ) error {
 	cmdKey := uniqueCmdKey(chainName, command, cmd.Process.Pid)
 
@@ -115,55 +169,72 @@ func (m *manager) supervise(
 	defer m.procs.remove(cmdKey)
 
 	go func() {
-		waitErr <- cmd.Wait()
+		waitErr <- waitFn()
 
 		close(waitDone)
 	}()
 
 	select {
 	case <-ctx.Done():
-		m.lgr.Info().Str("cmd", command.Cmd).Msg("Context canceled, stopping command")
-
-		if onCancel != nil {
-			onCancel()
-		}
-
-		if err := sendSignalToGroup(cmd, m.getShutdownSignal()); err != nil {
-			m.lgr.Warn().Err(err).Str("cmd", command.Cmd).Msg("Failed to send shutdown signal to process group")
-		}
-
-		select {
-		case <-waitDone:
-		case <-time.After(forceKillTimeout):
-			m.lgr.Warn().Str("cmd", command.Cmd).Msg("Force killing command group")
-
-			if err := killProcessGroup(cmd); err != nil {
-				m.lgr.Warn().Err(err).Str("cmd", command.Cmd).Msg("Failed to kill process group")
-			}
-
-			<-waitDone
-		}
-
-		if onDone != nil {
-			onDone()
-		}
+		m.stopCommand(cmd, command, waitDone, abandonOutput)
 
 		return ctx.Err()
 
 	case <-waitDone:
-		if onDone != nil {
-			onDone()
-		}
-
 		return <-waitErr
 	}
 }
 
-func (m *manager) Execute(ctx context.Context, chain *flow.CommandChain, command flow.Command) error {
+// stopCommand останавливает команду по отмене контекста: сигнал группе, затем
+// убийство по таймауту, затем — в крайнем случае — отказ от чтения вывода.
+func (m *Manager) stopCommand(
+	cmd *exec.Cmd,
+	command flow.Command,
+	waitDone <-chan struct{},
+	abandonOutput func(),
+) {
+	m.lgr.Info("Context canceled, stopping command", ui.F("cmd", command.Cmd))
+
+	if err := sendSignalToGroup(cmd, m.getShutdownSignal()); err != nil {
+		m.lgr.Warn("Failed to send shutdown signal to process group", ui.F("err", err), ui.F("cmd", command.Cmd))
+	}
+
+	select {
+	case <-waitDone:
+		return
+	case <-time.After(m.timeouts.ForceKill):
+	}
+
+	m.lgr.Warn("Force killing command group", ui.F("cmd", command.Cmd))
+
+	if err := killProcessGroup(cmd); err != nil {
+		m.lgr.Warn("Failed to kill process group", ui.F("err", err), ui.F("cmd", command.Cmd))
+	}
+
+	// Процесс убит, но вывод дочитывается: даём на это ограниченное время,
+	// чтобы не потерять последние строки уже мёртвой команды.
+	select {
+	case <-waitDone:
+		return
+	case <-time.After(m.timeouts.Drain):
+	}
+
+	// EOF не пришёл: открытый конец пайпа удерживает кто-то, кого убийство
+	// группы не задело. Дальше ждать нечего.
+	m.lgr.Warn("Giving up on reading command output", ui.F("cmd", command.Cmd))
+
+	if abandonOutput != nil {
+		abandonOutput()
+	}
+
+	<-waitDone
+}
+
+func (m *Manager) Execute(ctx context.Context, chain *flow.CommandChain, command flow.Command) error {
 	//nolint:gosec // command/args come from trusted config for CLI tool
 	cmd := exec.Command(command.Cmd, command.Args...)
 	cmd.Dir = command.Dir
-	cmd.Env = os.Environ()
+	setEnv(cmd, command)
 	configureProcessGroup(cmd)
 
 	var stdoutBuf, stderrBuf bytes.Buffer
@@ -172,19 +243,21 @@ func (m *manager) Execute(ctx context.Context, chain *flow.CommandChain, command
 	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
-		m.lgr.Err(err).Msg("Failed to start command")
+		m.lgr.Error(err, "Failed to start command")
 
 		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
 	}
 
-	m.lgr.Info().Msg(fmt.Sprintf("Command started: %s", ui.FullDisplayName(chainName(chain), command)))
+	m.lgr.Info("Command started: " + ui.FullDisplayName(chainName(chain), command))
 
-	if err := m.supervise(ctx, cmd, chainName(chain), command, nil, nil); err != nil {
+	// Вывод не-pipe команды собирается в буферы самим exec.Cmd, поэтому здесь
+	// «завершиться полностью» и «дождаться процесса» — одно и то же.
+	if err := m.supervise(ctx, cmd, chainName(chain), command, cmd.Wait, nil); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
 
-		m.lgr.Err(err).Push()
+		m.lgr.Error(err, "command failed")
 
 		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
 	}
@@ -196,42 +269,50 @@ func (m *manager) Execute(ctx context.Context, chain *flow.CommandChain, command
 
 // printBlock печатает результат не-pipe команды, сохраняя разделение потоков:
 // stdout выводится обычным блоком, непустой stderr — отдельным блоком ошибки.
-func (m *manager) printBlock(chain *flow.CommandChain, command flow.Command, stdout, stderr []byte) {
+func (m *Manager) printBlock(chain *flow.CommandChain, command flow.Command, stdout, stderr []byte) {
 	output := m.output.FormatChainInfo(chain, command)
 
-	var chainHeader string
-	if chain != nil {
-		chainHeader = chain.Color.Wrap(output.ChainName + ui.DividerSymbol)
-	} else {
-		chainHeader = output.ChainName + ui.DividerSymbol
-	}
-
 	if len(stdout) > 0 {
-		m.lgr.Log().Blocks(chainHeader, output.CmdName, indentBlock(stdout)).Push()
+		m.lgr.Blocks(output.Header, output.CmdName, indentBlock(stdout))
 	}
 
 	if len(stderr) > 0 {
-		m.lgr.Err(errors.New(indentBlock(stderr))).Blocks(chainHeader, output.CmdName).Push()
+		m.lgr.ErrorBlocks(errors.New(indentBlock(stderr)), output.Header, output.CmdName)
 	}
 }
 
 // indentBlock форматирует многострочный вывод с отступом для читаемости.
+//
+// Раньше строка накапливалась конкатенацией в цикле, то есть на каждой итерации
+// выделялась заново и копировалась целиком. Поведение было квадратичным: на
+// 10 000 строк уходило 4.59 ГБ выделенной памяти и треть секунды при 810 КБ
+// входного текста (находка P3). Здесь один буфер нужного размера и ни одной
+// промежуточной строки: len(b) уже не копируется в string, а строки берутся
+// подслайсами.
 func indentBlock(b []byte) string {
-	lines := strings.Split(string(b), ui.NewlineChar)
-	content := ui.NewlineChar
+	lineCount := bytes.Count(b, newlineBytes) + 1
 
-	for _, msg := range lines {
-		content += outputIndentation + msg + ui.NewlineChar
+	var sb strings.Builder
+
+	// Точная ёмкость: сам текст + отступ и перевод строки на каждую строку
+	// + ведущий перевод строки.
+	sb.Grow(len(b) + lineCount*(len(outputIndentation)+1) + 1)
+	sb.WriteString(ui.NewlineChar)
+
+	for line := range bytes.SplitSeq(b, newlineBytes) {
+		sb.WriteString(outputIndentation)
+		sb.Write(line)
+		sb.WriteString(ui.NewlineChar)
 	}
 
-	return content
+	return sb.String()
 }
 
-func (m *manager) ExecuteWithPipe(ctx context.Context, chain *flow.CommandChain, command flow.Command) error {
+func (m *Manager) ExecuteWithPipe(ctx context.Context, chain *flow.CommandChain, command flow.Command) error {
 	//nolint:gosec // command/args come from trusted config for CLI tool
 	cmd := exec.Command(command.Cmd, command.Args...)
 	cmd.Dir = command.Dir
-	cmd.Env = os.Environ()
+	setEnv(cmd, command)
 
 	// Настраиваем process group для правильной передачи сигналов
 	configureProcessGroup(cmd)
@@ -244,28 +325,40 @@ func (m *manager) ExecuteWithPipe(ctx context.Context, chain *flow.CommandChain,
 	defer stderr.Close()
 
 	if err := cmd.Start(); err != nil {
-		m.lgr.Error().AnErr("Failed starting command", err).Push()
+		m.lgr.Error(err, "Failed starting command")
 
 		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
 	}
 
-	m.lgr.Info().Msg(fmt.Sprintf("Command started: %s", ui.FullDisplayName(chainName(chain), command)))
+	m.lgr.Info("Command started: " + ui.FullDisplayName(chainName(chain), command))
 
-	// Контекст для отмены чтения вывода.
-	// Чтение запускается до supervise, чтобы корректно дочитать пайпы.
-	outputCtx, outputCancel := context.WithCancel(ctx)
-	defer outputCancel()
+	// Контекст чтения вывода намеренно НЕ производный от ctx: отмена ctx
+	// означает «останови команду», а не «перестань читать её вывод». Чтение
+	// прекращается само по EOF, когда процесс закрывает пайпы.
+	outputCtx, cancelOutput := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelOutput()
+
+	// Аварийная остановка чтения — закрытие пайпов. Это разблокирует читающий
+	// ReadString напрямую, без горутины-посредника и канала на каждую строку
+	// (находка P1). Штатным путём завершения не является: см. supervise.
+	abandonOutput := func() {
+		cancelOutput()
+
+		_ = stdout.Close()
+		_ = stderr.Close()
+	}
 
 	wg := m.streamPipes(outputCtx, chain, command, stdout, stderr)
 
-	// onCancel останавливает чтение вывода сразу при отмене; onDone дожидается
-	// завершения output-горутин после полного выхода процесса.
-	onDone := func() {
-		outputCancel()
+	// «Завершиться полностью» для piped-команды — это сначала дочитать вывод
+	// до EOF, и только потом собрать статус процесса.
+	waitFn := func() error {
 		wg.Wait()
+
+		return cmd.Wait()
 	}
 
-	if err := m.supervise(ctx, cmd, chainName(chain), command, outputCancel, onDone); err != nil {
+	if err := m.supervise(ctx, cmd, chainName(chain), command, waitFn, abandonOutput); err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
@@ -278,7 +371,7 @@ func (m *manager) ExecuteWithPipe(ctx context.Context, chain *flow.CommandChain,
 
 // streamPipes запускает две горутины чтения stdout/stderr и возвращает WaitGroup,
 // по которой можно дождаться завершения обработки вывода.
-func (m *manager) streamPipes(
+func (m *Manager) streamPipes(
 	ctx context.Context,
 	chain *flow.CommandChain,
 	command flow.Command,
@@ -286,46 +379,67 @@ func (m *manager) streamPipes(
 ) *sync.WaitGroup {
 	var wg sync.WaitGroup
 
+	// Разделитель неизменен, поэтому берётся готовым: раньше он собирался
+	// заново на каждую строку вывода (находка P2).
+	div := m.output.Divider()
+
 	stdoutHandler := func(chainNameStyleText, cmdName, content string, counter int) {
-		div := (reggol.ColorFgMagenta | reggol.ColorFgBright).Wrap(ui.DividerSymbol)
 		cmdNameStyled := fmt.Sprintf(`%s (%d) %s`, cmdName, counter, div)
-		m.lgr.Log().Blocks(chainNameStyleText, cmdNameStyled, content).Push()
+		m.lgr.Blocks(chainNameStyleText, cmdNameStyled, content)
 	}
 
 	stderrHandler := func(chainNameStyleText, cmdName, content string, counter int) {
-		m.lgr.Err(errors.New(content)).Blocks(chainNameStyleText, cmdName).Push()
+		m.lgr.ErrorBlocks(errors.New(content), chainNameStyleText, cmdName)
 	}
 
 	wg.Go(func() {
-		if err := m.output.HandleOutput(ctx, bufio.NewReader(stdout), chain, command, stdoutHandler); err != nil {
-			m.lgr.Err(err).Push()
+		reader := bufio.NewReaderSize(stdout, pipeReadBufferSize)
+		if err := m.output.HandleOutput(ctx, reader, chain, command, stdoutHandler); err != nil {
+			m.lgr.Error(err, "command failed")
 		}
 	})
 
 	wg.Go(func() {
-		if err := m.output.HandleOutput(ctx, bufio.NewReader(stderr), chain, command, stderrHandler); err != nil {
-			m.lgr.Err(err).Push()
+		reader := bufio.NewReaderSize(stderr, pipeReadBufferSize)
+		if err := m.output.HandleOutput(ctx, reader, chain, command, stderrHandler); err != nil {
+			m.lgr.Error(err, "command failed")
 		}
 	})
 
 	return &wg
 }
 
-func handleCommandCompletionErr(waitErr error, logger *reggol.Logger) error {
+func handleCommandCompletionErr(waitErr error, logger ui.Logger) error {
+	// ExitCode() вместо syscall.WaitStatus: портируемо и не тянет платформенный
+	// пакет в кросс-платформенный файл.
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
-		if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-			logger.Error().Int("Exit Status", status.ExitStatus()).Msg("Command failed")
+		code := exitErr.ExitCode()
+		logger.Error(nil, "Command failed", ui.F("Exit Status", code))
 
-			return fmt.Errorf("%w: exit status %d", ErrCommandExecution, status.ExitStatus())
-		}
+		return fmt.Errorf("%w: exit status %d", ErrCommandExecution, code)
 	}
 
 	return fmt.Errorf("%w: %w", ErrCommandExecution, waitErr)
 }
 
-func (m *manager) ExecuteParallel(ctx context.Context, chains []*flow.CommandChain) error {
+func (m *Manager) ExecuteParallel(ctx context.Context, chains []*flow.CommandChain) error {
 	return m.chains.ExecuteParallel(ctx, chains)
+}
+
+// setEnv задаёт окружение дочернего процесса.
+//
+// Если у команды нет собственных переменных, Env не трогаем вовсе: exec.Cmd
+// с нулевым Env наследует окружение родителя, а прежний безусловный
+// os.Environ() копировал весь блок на каждый запуск впустую (находка P6).
+// Собственные переменные дописываются в конец — при совпадении ключей
+// побеждает последнее значение, то есть заданное в конфигурации.
+func setEnv(cmd *exec.Cmd, command flow.Command) {
+	if len(command.Env) == 0 {
+		return
+	}
+
+	cmd.Env = slices.Concat(os.Environ(), command.Env)
 }
 
 // chainName безопасно достаёт имя цепочки.

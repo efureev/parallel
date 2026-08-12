@@ -4,12 +4,10 @@ go 1.26
 
 //replace github.com/efureev/reggol => ../reggol
 
-require (
-	github.com/efureev/reggol v0.4.1
-	gopkg.in/yaml.v3 v3.0.1
-)
+require github.com/efureev/reggol v1.2.1
 
-require (
-	gh.tarampamp.am/colors v1.3.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-)
+require github.com/goccy/go-yaml v1.19.2
+
+require golang.org/x/sync v0.22.0
+
+require golang.org/x/sys v0.47.0

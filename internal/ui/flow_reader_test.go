@@ -7,7 +7,7 @@ import (
 )
 
 func TestFlowReader_Out(t *testing.T) {
-	reader := NewFlowReader(Logger())
+	reader := NewFlowReader(NewDiscardLogger())
 
 	// nil и пустой Flow не должны приводить к панике.
 	reader.Out(nil)

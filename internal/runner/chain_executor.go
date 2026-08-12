@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/efureev/reggol"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/efureev/parallel/internal/flow"
+	"github.com/efureev/parallel/internal/ui"
 )
 
 // CommandRunner описывает низкоуровневое выполнение одной команды.
@@ -22,12 +23,12 @@ type stopAllFunc func()
 
 // chainExecutor отвечает за выполнение цепочек команд поверх низкоуровневого раннера.
 type chainExecutor struct {
-	lgr     *reggol.Logger
+	lgr     ui.Logger
 	runner  CommandRunner
 	stopAll stopAllFunc
 }
 
-func newChainExecutor(lgr *reggol.Logger, runner CommandRunner, stopAll stopAllFunc) *chainExecutor {
+func newChainExecutor(lgr ui.Logger, runner CommandRunner, stopAll stopAllFunc) *chainExecutor {
 	return &chainExecutor{
 		lgr:     lgr,
 		runner:  runner,
@@ -35,127 +36,147 @@ func newChainExecutor(lgr *reggol.Logger, runner CommandRunner, stopAll stopAllF
 	}
 }
 
-// ExecuteParallel выполняет цепочки параллельно, а команды внутри одной цепочки — последовательно.
+// ExecuteParallel выполняет цепочки параллельно, а команды внутри одной цепочки —
+// с учётом их pipe-флага.
+//
+// Оркестрация построена на errgroup: раньше здесь были собственные WaitGroup,
+// канал ошибок и горутина-монитор, причём монитор ждал отмены РОДИТЕЛЬСКОГО
+// контекста и жил до конца процесса, если тот не отменялся никогда (находка C1).
+// errgroup.WithContext закрывает и оркестрацию, и время жизни наблюдателя.
 func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.CommandChain) error {
-	var wg sync.WaitGroup
-	wg.Add(len(chains))
-	errCh := make(chan error, len(chains))
+	group, groupCtx := errgroup.WithContext(ctx)
 
-	// Создаем контекст для мониторинга отмены
-	chainCtx, chainCancel := context.WithCancel(ctx)
-	defer chainCancel()
+	// Наблюдатель за отменой снаружи: живёт ровно столько же, сколько группа,
+	// потому что ждёт groupCtx, а тот закрывается при выходе из Wait.
+	stopped := make(chan struct{})
+	defer close(stopped)
+
+	go c.watchCancellation(ctx, stopped)
+
+	// Ошибки собираются отдельно от errgroup намеренно: errgroup.Wait отдаёт
+	// только первую, а нам нужны все — иначе пользователь чинит по одной
+	// проблеме за прогон (находка C2). От errgroup берём другое: отмену
+	// groupCtx при первом отказе и корректное ожидание всех горутин.
+	var (
+		mu   sync.Mutex
+		errs []error
+	)
 
 	for _, chain := range chains {
-		go func(ch *flow.CommandChain) {
-			defer wg.Done()
+		group.Go(func() error {
+			err := c.executeChain(groupCtx, chain)
+			if err != nil {
+				mu.Lock()
 
-			if err := c.executeChain(chainCtx, ch); err != nil {
-				if !errors.Is(err, context.Canceled) {
-					errCh <- err
-				}
+				errs = append(errs, err)
+
+				mu.Unlock()
 			}
-		}(chain)
-	}
 
-	// Мониторим отмену контекста
-	go func() {
-		<-ctx.Done()
-		c.lgr.Info().Msg("Shutdown signal received, stopping all commands...")
-
-		if c.stopAll != nil {
-			c.stopAll()
-		}
-
-		chainCancel()
-	}()
-
-	go func() {
-		wg.Wait()
-		close(errCh)
-	}()
-
-	for err := range errCh {
-		if err != nil {
 			return err
+		})
+	}
+
+	_ = group.Wait()
+
+	return joinRealErrors(errs)
+}
+
+// joinRealErrors объединяет ошибки цепочек, отбрасывая отмену контекста:
+// цепочка, остановленная из-за отказа соседней, сбоем не является.
+func joinRealErrors(errs []error) error {
+	real := make([]error, 0, len(errs))
+
+	for _, err := range errs {
+		if err != nil && !errors.Is(err, context.Canceled) {
+			real = append(real, err)
 		}
 	}
 
-	return nil
+	return errors.Join(real...)
+}
+
+// watchCancellation останавливает все процессы, когда снаружи отменяют контекст.
+//
+// Завершается либо по отмене, либо по закрытию stopped — то есть не переживает
+// вызов ExecuteParallel даже если родительский контекст не отменяется никогда.
+func (c *chainExecutor) watchCancellation(ctx context.Context, stopped <-chan struct{}) {
+	select {
+	case <-ctx.Done():
+	case <-stopped:
+		return
+	}
+
+	c.lgr.Info("Shutdown signal received, stopping all commands...")
+
+	if c.stopAll != nil {
+		c.stopAll()
+	}
 }
 
 // logSkipped сообщает о команде, отключённой флагом disable в конфигурации.
 func (c *chainExecutor) logSkipped(chain *flow.CommandChain, cmd flow.Command) {
-	c.lgr.Info().Msg(
+	c.lgr.Info(
 		fmt.Sprintf("Command is disabled, skipping: chain=%s command=%s", chain.Name, cmd.DisplayName()),
 	)
 }
 
-// executeChain выполняет команды одной цепочки с учетом pipe-флага:
-//   - pipe=false — выполняются последовательно (синхронно)
-//   - pipe=true  — запускаются в горутинах и выполняются параллельно, но в рамках цепочки
-//     завершение цепочки ожидает окончания всех запущенных pipe-команд
+// executeChain выполняет команды одной цепочки с учётом pipe-флага:
+//   - pipe=false — выполняются последовательно, в порядке из конфигурации;
+//   - pipe=true  — запускаются сразу и работают параллельно, но цепочка не
+//     считается завершённой, пока не закончится каждая из них.
+//
+// Отказ последовательной команды прекращает запуск следующих; уже запущенные
+// pipe-команды всё равно дожидаются.
 func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandChain) error {
 	var (
-		wg       sync.WaitGroup
+		piped    errgroup.Group
 		firstErr error
 	)
 
-	commands := chain.Commands()
-	errCh := make(chan error, len(commands))
-	breakLoop := false
+	for _, cmd := range chain.Commands() {
+		if ctx.Err() != nil {
+			firstErr = ctx.Err()
 
-	for _, cmd := range commands {
-		if breakLoop {
 			break
 		}
 
-		select {
-		case <-ctx.Done():
-			firstErr = ctx.Err()
-			breakLoop = true
-		default:
-			if cmd.Disable {
-				c.logSkipped(chain, cmd)
+		if cmd.Disable {
+			c.logSkipped(chain, cmd)
 
-				continue
-			}
+			continue
+		}
 
-			if cmd.Pipe { // Параллельный запуск
-				wg.Add(1)
+		if cmd.Pipe {
+			piped.Go(func() error {
+				return c.runner.ExecuteWithPipe(ctx, chain, cmd)
+			})
 
-				go func(cm flow.Command) {
-					defer wg.Done()
+			continue
+		}
 
-					if err := c.runner.ExecuteWithPipe(ctx, chain, cm); err != nil && !errors.Is(err, context.Canceled) {
-						errCh <- err
-					}
-				}(cmd)
-			} else { // Последовательный запуск
-				if err := c.runner.Execute(ctx, chain, cmd); err != nil {
-					firstErr = err
-					breakLoop = true
-				}
-			}
+		if err := c.runner.Execute(ctx, chain, cmd); err != nil {
+			firstErr = err
+
+			break
 		}
 	}
 
-	// Ожидаем завершения всех запущенных pipe-команд
-	wg.Wait()
-	close(errCh)
+	// Ошибка последовательной команды идёт первой: именно она оборвала цепочку.
+	// Ошибки pipe-команд добавляются следом, ни одна не теряется (находка C2).
+	return joinChainErrors(firstErr, piped.Wait())
+}
 
-	if firstErr != nil && !errors.Is(firstErr, context.Canceled) {
-		return firstErr
+// joinChainErrors объединяет ошибку, оборвавшую цепочку, с ошибками pipe-команд,
+// отбрасывая отмену контекста: она означает штатную остановку, а не сбой.
+func joinChainErrors(firstErr, pipedErr error) error {
+	if errors.Is(firstErr, context.Canceled) {
+		firstErr = nil
 	}
 
-	for err := range errCh {
-		if err != nil {
-			return err
-		}
+	if errors.Is(pipedErr, context.Canceled) {
+		pipedErr = nil
 	}
 
-	if firstErr != nil {
-		return firstErr
-	}
-
-	return nil
+	return errors.Join(firstErr, pipedErr)
 }

@@ -1,10 +1,8 @@
-gh.tarampamp.am/colors v1.3.0 h1:y214FkXd/YsnTt5oxClOUYOZIrHBO9dpLYxn+hWAxRk=
-gh.tarampamp.am/colors v1.3.0/go.mod h1:dcvCIw5azlFgTRMW5U8GU2UuN2kPsxGPwSSzFbSvB64=
-github.com/efureev/reggol v0.4.1 h1:I6Jouq6W2fFPDGpH2EatBtaNUJT1EGC9aZ2D6J5sInQ=
-github.com/efureev/reggol v0.4.1/go.mod h1:073C84kyjzudJAF2sS5nqm0p2mUGmYkVP42kElGbx1Y=
+github.com/efureev/reggol v1.2.1 h1:JoOuT1UIVNcZPYsufo+TyXYXrQT/RYGSeS2zPVmaJHk=
+github.com/efureev/reggol v1.2.1/go.mod h1:FUE5MGoqudWs2LXnFHnoaKVIRf6xMnrd149yb21o3TM=
+github.com/goccy/go-yaml v1.19.2 h1:PmFC1S6h8ljIz6gMRBopkjP1TVT7xuwrButHID66PoM=
+github.com/goccy/go-yaml v1.19.2/go.mod h1:XBurs7gK8ATbW4ZPGKgcbrY1Br56PdM69F7LkFRi1kA=
+golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
+golang.org/x/sync v0.22.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
 golang.org/x/sys v0.47.0 h1:o7XGOvZQCADBQQ4Y7VNq2dRWQR7JmOUW8Kxx4ZsNgWs=
 golang.org/x/sys v0.47.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
-gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
-gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
-gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=

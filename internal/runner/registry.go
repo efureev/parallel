@@ -1,16 +1,13 @@
 package runner
 
 import (
+	"os"
 	"os/exec"
 	"sync"
-	"syscall"
 	"time"
 
-	"github.com/efureev/reggol"
+	"github.com/efureev/parallel/internal/ui"
 )
-
-// Timeout для graceful shutdown конкретного процесса (перед принудительным Kill).
-const forceKillTimeout = 3 * time.Second
 
 // trackedProcess хранит запущенную команду вместе с каналом завершения.
 // Канал done закрывается владельцем процесса (executor) ровно один раз —
@@ -61,13 +58,13 @@ func (r *processRegistry) snapshot() map[string]*trackedProcess {
 
 // stopAll останавливает все зарегистрированные процессы, отправляя им заданный сигнал,
 // ожидая завершения и при необходимости выполняя принудительное убийство.
-func (r *processRegistry) stopAll(lgr *reggol.Logger, sig syscall.Signal) {
+func (r *processRegistry) stopAll(lgr ui.Logger, sig os.Signal, forceKill time.Duration) {
 	cmds := r.snapshot()
 	if len(cmds) == 0 {
 		return
 	}
 
-	lgr.Info().Msg("Stopping all running commands...")
+	lgr.Info("Stopping all running commands...")
 
 	var wg sync.WaitGroup
 	wg.Add(len(cmds))
@@ -81,19 +78,19 @@ func (r *processRegistry) stopAll(lgr *reggol.Logger, sig syscall.Signal) {
 				return
 			}
 
-			lgr.Debug().Str("cmd", k).Msgf("Sending %s to command group", sig.String())
+			lgr.Debug("Sending "+sig.String()+" to command group", ui.F("cmd", k))
 
 			if err := sendSignalToGroup(c, sig); err != nil {
-				lgr.Warn().Err(err).Str("cmd", k).Msg("Failed to send shutdown signal to process group")
+				lgr.Warn("Failed to send shutdown signal to process group", ui.F("err", err), ui.F("cmd", k))
 			}
 
 			// Ждём завершения через канал владельца (без собственного Wait).
 			select {
-			case <-time.After(forceKillTimeout):
-				lgr.Warn().Str("cmd", k).Msg("Force killing command group after timeout")
+			case <-time.After(forceKill):
+				lgr.Warn("Force killing command group after timeout", ui.F("cmd", k))
 
 				if err := killProcessGroup(c); err != nil {
-					lgr.Warn().Err(err).Str("cmd", k).Msg("Failed to kill process group")
+					lgr.Warn("Failed to kill process group", ui.F("err", err), ui.F("cmd", k))
 				}
 
 				<-p.done // дождаться завершения Wait() после Kill
@@ -103,4 +100,28 @@ func (r *processRegistry) stopAll(lgr *reggol.Logger, sig syscall.Signal) {
 	}
 
 	wg.Wait()
+}
+
+// killAll убивает все группы процессов немедленно, без сигнала и без ожидания.
+//
+// Ожидания здесь нет намеренно: метод вызывается по второму Ctrl+C, когда
+// пользователь уже дал понять, что ждать не готов. Дочитывание вывода и
+// завершение Wait() происходят своим чередом в supervise.
+func (r *processRegistry) killAll(lgr ui.Logger) {
+	cmds := r.snapshot()
+	if len(cmds) == 0 {
+		return
+	}
+
+	lgr.Warn("Killing all running commands immediately...")
+
+	for key, tp := range cmds {
+		if tp.cmd == nil || tp.cmd.Process == nil {
+			continue
+		}
+
+		if err := killProcessGroup(tp.cmd); err != nil {
+			lgr.Warn("Failed to kill process group", ui.F("err", err), ui.F("cmd", key))
+		}
+	}
 }

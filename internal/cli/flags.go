@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -12,6 +13,9 @@ import (
 const (
 	defaultConfigPath = ".parallelrc.yaml"
 )
+
+// ErrEmptyConfigPath — флаг -f получил пустое значение.
+var ErrEmptyConfigPath = errors.New("config file path cannot be empty")
 
 // Config хранит параметры запуска, разобранные из аргументов командной строки.
 type Config struct {
@@ -54,7 +58,7 @@ func ParseFlags(opts ...Option) (*Config, error) {
 
 	// Validate the config
 	if cfg.ConfigFilePath == "" {
-		return nil, fmt.Errorf("config file path cannot be empty")
+		return nil, ErrEmptyConfigPath
 	}
 
 	return &cfg, nil

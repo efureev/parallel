@@ -1,23 +1,10 @@
 package config
 
 import (
-	"io"
+	"errors"
 	"strings"
 	"testing"
-
-	"github.com/efureev/reggol"
 )
-
-// testLogger отдаёт логгер, пишущий в никуда. Пакет config не зависит от ui
-// по правилам слоёв, поэтому логгер здесь конструируется напрямую.
-func testLogger() *reggol.Logger {
-	out := reggol.NewConsoleWriter(func(w *reggol.ConsoleWriter) {
-		w.Out = io.Discard
-	})
-	l := reggol.New(out)
-
-	return &l
-}
 
 // dockerImage собирает анонимную структуру образа так, как её объявляет dockerCommand.
 func dockerImage(name string) struct {
@@ -33,9 +20,13 @@ func dockerImage(name string) struct {
 }
 
 func TestFlowBuilder_BuildMissingCommands(t *testing.T) {
-	b := NewFlowBuilder(testLogger())
+	b := NewFlowBuilder()
 
-	result := b.Build(Data{})
+	result, err := b.Build(Data{})
+
+	if !errors.Is(err, ErrMissingCommands) {
+		t.Fatalf("expected ErrMissingCommands, got %v", err)
+	}
 
 	if len(result.Chains) != 0 {
 		t.Fatalf("expected 0 chains when 'commands' missing, got %d", len(result.Chains))
@@ -43,7 +34,7 @@ func TestFlowBuilder_BuildMissingCommands(t *testing.T) {
 }
 
 func TestFlowBuilder_BuildRegularAndDocker(t *testing.T) {
-	b := NewFlowBuilder(testLogger())
+	b := NewFlowBuilder()
 
 	data := Data{
 		Chains: []ChainConfig{
@@ -65,7 +56,10 @@ func TestFlowBuilder_BuildRegularAndDocker(t *testing.T) {
 		},
 	}
 
-	result := b.Build(data)
+	result, err := b.Build(data)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
 
 	if len(result.Chains) != 2 {
 		t.Fatalf("expected 2 chains, got %d", len(result.Chains))
@@ -101,7 +95,7 @@ func TestFlowBuilder_BuildRegularAndDocker(t *testing.T) {
 }
 
 func TestFlowBuilder_DisablePropagationAndDefault(t *testing.T) {
-	b := NewFlowBuilder(testLogger())
+	b := NewFlowBuilder()
 
 	data := Data{
 		Chains: []ChainConfig{
@@ -121,7 +115,10 @@ func TestFlowBuilder_DisablePropagationAndDefault(t *testing.T) {
 		},
 	}
 
-	result := b.Build(data)
+	result, err := b.Build(data)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
 
 	states := map[string]bool{}
 
@@ -148,7 +145,7 @@ func TestFlowBuilder_DisablePropagationAndDefault(t *testing.T) {
 // после снятия связи Command→Chain гарантировать нужно уже не тождество родителя,
 // а то, что команды разложены по своим цепочкам в исходном порядке.
 func TestFlowBuilder_PreservesOrder(t *testing.T) {
-	b := NewFlowBuilder(testLogger())
+	b := NewFlowBuilder()
 
 	data := Data{
 		Chains: []ChainConfig{
@@ -168,7 +165,10 @@ func TestFlowBuilder_PreservesOrder(t *testing.T) {
 		},
 	}
 
-	result := b.Build(data)
+	result, err := b.Build(data)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
 
 	if len(result.Chains) != 2 {
 		t.Fatalf("expected 2 chains, got %d", len(result.Chains))

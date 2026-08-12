@@ -13,8 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/efureev/reggol"
-
 	"github.com/efureev/parallel/internal/flow"
 	"github.com/efureev/parallel/internal/ui"
 )
@@ -42,7 +40,14 @@ var (
 	genWidth  = flag.Int("e2e.width", 0, "internal: payload width in bytes")
 	e2eRows   = flag.Int("e2e.rows", e2eDefaultRows, "e2e: строк на цепочку")
 	e2eReport = flag.Bool("e2e.report", false, "e2e: печатать замер пропускной способности")
-	e2eStrict = flag.Bool("e2e.strict", false, "e2e: требовать целостности и полноты вывода (фазы 3 и 4)")
+	// Строгость включена по умолчанию с фазы 3: потеря и порча вывода закрыты,
+	// и тест из измерителя стал сторожем. Флаг оставлен, чтобы можно было
+	// снять замеры на заведомо сломанном дереве, не правя код.
+	e2eLenient = flag.Bool("e2e.lenient", false, "e2e: только сообщать о дефектах вывода, не заваливать тест")
+	// Режим дочернего процесса для проверки мягкого завершения на Windows.
+	// Флаг объявлен здесь, а тест — в файле с тегом windows: флаги должны
+	// разбираться на всех платформах, иначе дочерний процесс упадёт на неизвестном аргументе.
+	genGraceful = flag.Bool("e2e.graceful-child", false, "internal: ждать консольного события и выйти штатно")
 )
 
 func TestMain(m *testing.M) {
@@ -51,6 +56,10 @@ func TestMain(m *testing.M) {
 	if *genLines > 0 {
 		emitLines(*genTag, *genLines, *genWidth)
 		os.Exit(0)
+	}
+
+	if *genGraceful {
+		runGracefulChild()
 	}
 
 	os.Exit(m.Run())
@@ -82,7 +91,7 @@ func buildE2EFlow(t *testing.T, chains, rows, width int) []*flow.CommandChain {
 	for c := range chains {
 		tag := "chain" + strconv.Itoa(c)
 
-		chain := &flow.CommandChain{Name: tag, Color: reggol.ColorFgCyan}
+		chain := &flow.CommandChain{Name: tag, ColorIdx: c}
 		chain.Add(flow.Command{
 			Name: tag,
 			Cmd:  self,
@@ -118,9 +127,7 @@ func drainPipe(r *os.File, dst *[]string, wg *sync.WaitGroup) {
 // Вывод направляется в настоящий os.Pipe, а не в bytes.Buffer: чересполосица
 // возникает на уровне write(2), и на буфере в памяти не воспроизводится.
 func TestE2EOutputIntegrity(t *testing.T) {
-	if testing.Short() {
-		t.Skip("e2e: пропуск в коротком режиме")
-	}
+	requireIntegration(t)
 
 	rows := *e2eRows
 	want := e2eChains * rows
@@ -139,14 +146,9 @@ func TestE2EOutputIntegrity(t *testing.T) {
 
 	go drainPipe(pr, &collected, &wg)
 
-	trans := ui.CreateTransformer()
-	out := reggol.NewConsoleWriter(func(w *reggol.ConsoleWriter) {
-		w.Out = pw
-		w.Trans = trans
-	})
-	lgr := reggol.New(out)
-
-	mgr := NewManager(&lgr)
+	// Логгер строится портом: пакет runner про библиотеку логирования не знает.
+	out := ui.NewOutput(pw)
+	mgr := NewManager(out.Logger(), out.Formatter())
 	chains := buildE2EFlow(t, e2eChains, rows, e2eWidth)
 
 	start := time.Now()
@@ -156,6 +158,11 @@ func TestE2EOutputIntegrity(t *testing.T) {
 	}
 
 	elapsed := time.Since(start)
+
+	// Досбрасываем буфер до закрытия пайпа, иначе хвост вывода потеряется.
+	if err := out.Close(); err != nil {
+		t.Fatalf("close output: %v", err)
+	}
 
 	_ = pw.Close()
 	wg.Wait()
@@ -167,20 +174,16 @@ func TestE2EOutputIntegrity(t *testing.T) {
 		reportStats(t, st, rows, want, elapsed)
 	}
 
-	// На фазе 0 тест снимает базовую линию, а не выносит приговор: оба дефекта
-	// известны, зафиксированы в docs/AUDIT.md и закрываются фазами 3 и 4.
-	// Флаг -e2e.strict превращает замеры в требования; по итогам фазы 4 он
-	// становится режимом по умолчанию и уходит в CI.
 	report := func(format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)
 
-		if *e2eStrict {
-			t.Error(msg)
+		if *e2eLenient {
+			t.Log("ИЗВЕСТНЫЙ ДЕФЕКТ: " + msg)
 
 			return
 		}
 
-		t.Log("ИЗВЕСТНЫЙ ДЕФЕКТ: " + msg)
+		t.Error(msg)
 	}
 
 	// Целостность строки: чересполосица при записи в один дескриптор (находка P4).
@@ -188,9 +191,14 @@ func TestE2EOutputIntegrity(t *testing.T) {
 		report("склеенных строк %d, ожидалось 0", st.merged)
 	}
 
-	if st.intact != st.markers {
-		report("порвано строк %d: целых %d при %d маркерах",
-			st.markers-st.intact, st.intact, st.markers)
+	if st.interleaved != 0 {
+		report("наложено записей %d, ожидалось 0", st.interleaved)
+	}
+
+	// Обрыв записи на середине — след того же дефекта, что и потеря строк:
+	// чтение пайпа прекращается, не дочитав текущую строку.
+	if st.truncated != 0 {
+		report("обрезано записей %d (обрыв чтения при выходе процесса)", st.truncated)
 	}
 
 	// Полнота вывода: часть строк не доходит вовсе — чтение пайпов прерывается
@@ -207,8 +215,8 @@ func reportStats(t *testing.T, st outputStats, rows, want int, elapsed time.Dura
 	t.Logf("цепочек=%d строк/цепочку=%d ширина=%d итого=%d за %v → %.0f строк/с",
 		e2eChains, rows, e2eWidth, want, elapsed.Round(time.Millisecond),
 		float64(want)/elapsed.Seconds())
-	t.Logf("маркеров=%d целых=%d склеенных=%d уникальных=%d потеряно=%d (%.1f%%)",
-		st.markers, st.intact, st.merged, st.unique, want-st.intact,
+	t.Logf("маркеров=%d целых=%d склеенных=%d обрезано=%d наложено=%d уникальных=%d потеряно=%d (%.1f%%)",
+		st.markers, st.intact, st.merged, st.truncated, st.interleaved, st.unique, want-st.intact,
 		float64(want-st.intact)/float64(want)*100)
 
 	for c := range e2eChains {
@@ -226,11 +234,17 @@ var e2eLineRe = regexp.MustCompile(e2eMarker + ` (chain\d+) (\d+) (x+) ` + e2eEn
 // merged — сколько строк вывода содержат больше одной записи (потеря границы строки);
 // unique — различные записи «цепочка/номер»; perChain — сколько записей дошло от каждой цепочки.
 type outputStats struct {
-	markers  int
-	intact   int
-	merged   int
-	unique   int
-	perChain map[string]int
+	markers int
+	intact  int
+	merged  int
+	// truncated — записи, оборванные на середине: метка есть, завершителя нет.
+	// Это след обрезания вывода при выходе процесса (C10), а не наложения записей.
+	truncated int
+	// interleaved — записи, испорченные наложением чужой записи: и метка, и
+	// завершитель на месте, но содержимое не совпадает с ожидаемым (P4).
+	interleaved int
+	unique      int
+	perChain    map[string]int
 }
 
 // inspectOutput разбирает собранный вывод и считает статистику целостности.
@@ -250,14 +264,27 @@ func inspectOutput(lines []string) outputStats {
 			st.merged++
 		}
 
+		matched := 0
+
 		for _, m := range e2eLineRe.FindAllStringSubmatch(line, -1) {
 			if len(m[3]) != e2eWidth {
 				continue
 			}
 
+			matched++
 			st.intact++
 			st.perChain[m[1]]++
 			unique[m[1]+"/"+m[2]] = struct{}{}
+		}
+
+		// Классифицируем испорченные записи: обрыв на середине — это след C10,
+		// а наложение — след P4. Лечатся они в разных фазах, и смешивать их нельзя.
+		if broken := count - matched; broken > 0 {
+			if strings.HasSuffix(line, e2eEnd) {
+				st.interleaved += broken
+			} else {
+				st.truncated += broken
+			}
 		}
 	}
 

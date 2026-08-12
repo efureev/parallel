@@ -4,10 +4,21 @@
 # Build configuration constants
 readonly APP_NAME="parallel"
 readonly BUILD_DIR=${BUILD_PATH:-"build"}
-readonly TARGET_OS=${GOOS:-"darwin"}
-readonly TARGET_ARCH=${GOARCH:-"amd64"}
-readonly MAPPED_ARCH="x64"
+readonly TARGET_OS=${GOOS:-$(go env GOHOSTOS)}
+readonly TARGET_ARCH=${GOARCH:-$(go env GOHOSTARCH)}
 readonly CGO_SETTING=${CGO_ENABLED:-0}
+
+# arch_suffix переводит GOARCH в суффикс имени файла.
+#
+# Раньше суффикс был константой "x64" независимо от архитектуры: сборка под
+# arm64 давала файл parallel.darwin.x64 с arm64-бинарником внутри. Схема имён
+# теперь совпадает с матрицей .github/workflows/build.yml.
+arch_suffix() {
+    case "$1" in
+        amd64) echo "x64" ;;
+        *)     echo "$1" ;;
+    esac
+}
 
 # Version metadata (can be overridden via environment)
 VERSION=${VERSION:-"dev"}
@@ -29,7 +40,14 @@ clean_build_directory() {
 }
 
 build_executable() {
-    local executable_name="$APP_NAME.$TARGET_OS.$MAPPED_ARCH"
+    local suffix
+    suffix=$(arch_suffix "$TARGET_ARCH")
+
+    local executable_name="$APP_NAME.$TARGET_OS.$suffix"
+
+    if [ "$TARGET_OS" = "windows" ]; then
+        executable_name="$executable_name.exe"
+    fi
     
     echo "Building: OS: $TARGET_OS ARCH: $TARGET_ARCH file: $executable_name"
     

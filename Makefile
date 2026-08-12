@@ -28,7 +28,7 @@ lint: ## Run go linters
 
 # Testing
 gotest: ## Run go tests
-	docker-compose run $(DC_BASE_ARGS) -e CGO_ENABLED=1 go go test -v -race -timeout 5s ./...
+	docker-compose run $(DC_BASE_ARGS) -e CGO_ENABLED=1 go go test -v -race -shuffle=on -timeout 30s ./...
 
 test: lint gotest ## Run go tests and linters
 

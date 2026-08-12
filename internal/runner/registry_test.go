@@ -23,7 +23,9 @@ func startSleepCmd(t *testing.T) *exec.Cmd {
 }
 
 func TestProcessRegistry_AddRemoveAndStopAll(t *testing.T) {
-	logger := ui.Logger()
+	requireIntegration(t)
+
+	logger := ui.NewDiscardLogger()
 	reg := newProcessRegistry()
 
 	cmd := startSleepCmd(t)
@@ -46,8 +48,8 @@ func TestProcessRegistry_AddRemoveAndStopAll(t *testing.T) {
 
 	// stop all with SIGTERM; should not hang and should terminate the process group
 	start := time.Now()
-	reg.stopAll(logger, syscall.SIGTERM)
-	if time.Since(start) > forceKillTimeout*2 {
+	reg.stopAll(logger, syscall.SIGTERM, testTimeouts.ForceKill)
+	if time.Since(start) > testTimeouts.ForceKill*2 {
 		t.Fatalf("stopAll took too long, possible deadlock")
 	}
 
@@ -55,7 +57,7 @@ func TestProcessRegistry_AddRemoveAndStopAll(t *testing.T) {
 	select {
 	case <-waitDone:
 		// ok
-	case <-time.After(forceKillTimeout):
+	case <-time.After(testTimeouts.ForceKill):
 		t.Fatalf("command did not finish after stopAll")
 	}
 

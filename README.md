@@ -19,7 +19,7 @@ This README includes typical use cases and practical examples.
 
 ## Installation
 
-Requirements: Go 1.25+ (tested on macOS/Linux/Windows)
+Requirements: Go 1.26+ (tested on macOS/Linux/Windows)
 
 ```shell
 go install github.com/efureev/parallel@latest
@@ -39,6 +39,13 @@ If the configuration file is located elsewhere:
 
 ```shell
 parallel -f /path/to/config/flow.yaml
+```
+
+Two ready-to-run examples ship with the repository and need no editing:
+
+```shell
+parallel -f examples/basic.yaml   # two chains, sequential and streaming
+parallel -f examples/full.yaml    # env, dir, disable and the Docker mode
 ```
 
 Flags are supported currently:
@@ -113,12 +120,27 @@ commands: # list of parallel command chains
 - `pipe: false` (or missing) — run sequentially, respecting the order in the chain. Output is printed as a block after
   the command finishes.
 - `cmd: ['bin', 'arg1', ...]` — regular command and its args.
-- `dir: 'path'` — working directory for the command.
+- `dir: 'path'` — working directory for the command. A path that does not exist produces a warning at startup, not an
+  error: the directory may be created by an earlier command in the chain.
 - `disable: true` — disable a command without removing it from config. Disabled commands are shown in the flow preview
   and are skipped during execution. Default: `false`.
+- `env: { KEY: value }` — environment variables for this command. They are **added to** the environment `parallel`
+  itself runs with, not a replacement for it, so there is no need to restate `PATH`. On a key collision the value from
+  the config wins. Works for both regular and Docker commands.
 - `format.cmdName` — display name template. Supports placeholders:
     - `%CMD_NAME%` — command name (either `Name` or `Cmd`)
     - `%CMD_ARGS%` — arguments joined by space
+
+```yaml
+commands:
+  api:
+    serve:
+      pipe: true
+      cmd: [ 'go', 'run', './cmd/api' ]
+      env:
+        APP_ENV: development
+        PORT: '8080'
+```
 
 ### Docker mode
 
@@ -180,14 +202,20 @@ Parallel traps `SIGINT`, `SIGTERM`, `SIGQUIT` and forwards the same signal to th
 command (`setpgid` + group signal). Then it waits for completion up to a short timeout and only then force‑kills
 remaining groups.
 
-> Platform note: the full signal‑forwarding behavior above applies to Unix (macOS/Linux). On Windows, children are
-> started in a new process group (`CREATE_NEW_PROCESS_GROUP`); arbitrary signal forwarding is limited, so on shutdown
-> the process group is terminated (kill fallback) rather than receiving a graceful Unix‑style signal.
+> Platform note: on Windows arbitrary POSIX signals cannot be delivered. Children are started in a new process group
+> (`CREATE_NEW_PROCESS_GROUP`) and receive a `CTRL_BREAK` console event instead, which Node.js, Python, .NET and Go
+> runtimes all handle. If a process does not exit after that, it is killed as a fallback — the same two-step ladder
+> as on Unix.
 
 What this means for you:
 
-- Press Ctrl+C once to stop everything gracefully.
-- Long‑running children that handle signals (e.g., `node`, `php artisan serve`, `yarn`) can clean up before exit.
+- Press Ctrl+C **once** to stop everything gracefully. Long‑running children that handle signals (`node`,
+  `php artisan serve`, `yarn`) get a chance to clean up before exit.
+- Press Ctrl+C **twice** to stop waiting and kill every process immediately.
+- A third Ctrl+C exits `parallel` itself at once, with status `130`.
+
+Output is never truncated on shutdown: everything a command printed before it exited is read and displayed,
+including the last lines produced right before the process died.
 
 ## Flow preview
 
@@ -224,7 +252,7 @@ parallel
 Run with a custom config path:
 
 ```shell
-parallel -f app/flow.yaml
+parallel -f examples/full.yaml
 ```
 
 Minimal config to run two commands in parallel:
@@ -252,12 +280,38 @@ commands:
 - YAML error: “invalid flow configuration”
     - The tool validates that each chain has at least one command and each command has a non‑empty `cmd`
 
+## Compatibility
+
+Starting with `v1.0.0` the following is frozen and will not change without a `v2`:
+
+- **CLI flags** — `-f <path>`, `-v`, `--version`; the default config path `.parallelrc.yaml`.
+- **Exit codes** — `0` when every chain succeeded (and for `-v`); `1` on a startup/configuration
+  error or a failed command.
+- **Configuration schema** — the top-level `commands` key and the command fields `cmd`, `dir`,
+  `pipe`, `disable`, `env`, `format.cmdName`, `docker.*`, plus the `%CMD_NAME%` / `%CMD_ARGS%`
+  placeholders.
+- **Execution semantics** — chains run in parallel; inside a chain non-`pipe` commands run
+  sequentially in YAML order, `pipe` commands run concurrently, and the chain waits for all of them.
+
+Deliberately **not** frozen, so it may change in any release: the exact log line format and
+ordering, the color palette, the look of the flow preview, and error message wording.
+
+The module path stays `github.com/efureev/parallel` — the `/vN` suffix is only required from `v2`
+onwards. There is no importable Go API: everything lives under `internal/`, so `parallel` is a
+command, not a library.
+
 ## Development
 
 Run tests:
 
 ```shell
 go test ./...
+```
+
+Build the binary:
+
+```shell
+go build -o parallel ./cmd/parallel
 ```
 
 The repository also ships `make` targets (run inside Docker, no local tooling required):
@@ -268,13 +322,22 @@ The repository also ships `make` targets (run inside Docker, no local tooling re
 
 See [`CHANGELOG.md`](CHANGELOG.md) for the list of notable changes.
 
-The project structure is split into clear layers:
+The project follows the standard Go layout, one package per layer:
 
-- file loading (`fileLoader.go`) → raw YAML
-- flow building (`flowBuilder.go`) → domain model (`Flow`)
-- validation (`Flow.Validate`)
-- output formatting (`output.go`, `flowReader.go`)
-- execution and shutdown management (`manager.go`, `process_registry.go`, `chain_executor.go`)
+```
+cmd/parallel/        entry point: wiring and the exit code
+internal/
+  buildinfo/         version metadata injected via -ldflags
+  flow/              domain: Flow, CommandChain, Command, validation
+  config/            YAML schema, loading, building the domain Flow
+  runner/            process supervision, registry, process groups
+  ui/                logger port, output rendering, palette, flow preview
+  cli/               flags, signals, dependency wiring
+```
+
+Dependencies only ever point one way: `cli → {config, flow, runner, ui}`, `runner → {flow, ui}`,
+`config → flow`, `ui → flow`, and `flow` depends on nothing at all. The rule is enforced by
+`depguard` in `golangci-lint`, not by convention.
 
 ## License
 
@@ -285,4 +348,8 @@ MIT
 Русский кратко
 
 Parallel — утилита для параллельного запуска нескольких команд с читаемым цветным выводом и корректным завершением.
-Конфигурация — YAML, запуск: `parallel -f app/flow.yaml`. См. примеры выше и `app/flow.yaml`.
+Конфигурация — YAML, запуск: `parallel -f examples/basic.yaml`.
+
+Первый Ctrl+C останавливает всё вежливо, второй — немедленно, третий выходит сразу. Вывод команд при
+завершении не теряется: всё, что команда успела напечатать, будет показано. Готовые примеры
+конфигурации лежат в каталоге `examples/`.

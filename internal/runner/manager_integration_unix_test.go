@@ -20,6 +20,8 @@ func shCommand(name, script string, pipe bool) (*flow.CommandChain, flow.Command
 }
 
 func TestManager_ExecuteSuccess(t *testing.T) {
+	requireIntegration(t)
+
 	mgr := newTestManager(t)
 
 	chain, cmd := shCommand("ok", "echo hello; echo oops 1>&2", false)
@@ -30,6 +32,8 @@ func TestManager_ExecuteSuccess(t *testing.T) {
 }
 
 func TestManager_ExecuteFailureExitCode(t *testing.T) {
+	requireIntegration(t)
+
 	mgr := newTestManager(t)
 
 	chain, cmd := shCommand("fail", "exit 3", false)
@@ -45,6 +49,8 @@ func TestManager_ExecuteFailureExitCode(t *testing.T) {
 }
 
 func TestManager_ExecuteWithPipeSuccess(t *testing.T) {
+	requireIntegration(t)
+
 	mgr := newTestManager(t)
 
 	chain, cmd := shCommand("pipe-ok", "echo line1; echo line2; echo err 1>&2", true)
@@ -55,6 +61,8 @@ func TestManager_ExecuteWithPipeSuccess(t *testing.T) {
 }
 
 func TestManager_ExecuteWithPipeFailureExitCode(t *testing.T) {
+	requireIntegration(t)
+
 	mgr := newTestManager(t)
 
 	chain, cmd := shCommand("pipe-fail", "echo before; exit 2", true)
@@ -70,11 +78,13 @@ func TestManager_ExecuteWithPipeFailureExitCode(t *testing.T) {
 }
 
 func TestManager_ExecuteWithPipeContextCancel(t *testing.T) {
+	requireIntegration(t)
+
 	mgr := newTestManager(t)
 
 	chain, cmd := shCommand("pipe-cancel", "sleep 30", true)
 
-	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 
 	err := mgr.ExecuteWithPipe(ctx, chain, cmd)
@@ -103,8 +113,8 @@ func TestManager_ExecuteForceKill(t *testing.T) {
 		done <- mgr.Execute(ctx, chain, cmd)
 	}()
 
-	// Give the process time to start and install the trap, then cancel.
-	time.Sleep(300 * time.Millisecond)
+	// Даём процессу стартовать и установить trap, затем отменяем.
+	time.Sleep(150 * time.Millisecond)
 	cancel()
 
 	select {
@@ -112,7 +122,7 @@ func TestManager_ExecuteForceKill(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected context.Canceled after force kill, got %v", err)
 		}
-	case <-time.After(forceKillTimeout + 5*time.Second):
+	case <-time.After(testTimeouts.ForceKill + 5*time.Second):
 		t.Fatalf("process was not force-killed within the expected window")
 	}
 }
@@ -145,6 +155,8 @@ func buildFlow(chains []struct {
 }
 
 func TestManager_ExecuteParallelEndToEnd(t *testing.T) {
+	requireIntegration(t)
+
 	mgr := newTestManager(t)
 
 	result := buildFlow([]struct {
@@ -169,6 +181,8 @@ func TestManager_ExecuteParallelEndToEnd(t *testing.T) {
 }
 
 func TestManager_ExecuteParallelPropagatesFailure(t *testing.T) {
+	requireIntegration(t)
+
 	mgr := newTestManager(t)
 
 	result := buildFlow([]struct {

@@ -1,73 +1,39 @@
-// Package ui отвечает за представление: логгер, форматирование вывода команд
-// и человекочитаемый предпросмотр Flow.
+// Package ui отвечает за представление: порт логгера, форматирование вывода
+// команд, палитру и человекочитаемый предпросмотр Flow.
 package ui
 
-import (
-	"fmt"
-	"hash/fnv"
-	"sync"
-	"time"
+// Порт логгера.
+//
+// Смысл этого файла — граница. Библиотека логирования упоминается ровно в одном
+// месте проекта (logger_reggol.go), а весь остальной код работает с интерфейсом
+// Logger. Смена мажорной версии библиотеки или её замена целиком становится
+// правкой одного файла вместо восьми — см. docs/AUDIT.md, находка A10.
+//
+// Интерфейс намеренно узкий: в него попало только то, что проект реально вызывает.
 
-	"github.com/efureev/reggol"
-
-	"github.com/efureev/parallel/internal/flow"
-)
-
-// TODO(2.4): синглтон уезжает — логгер будет конструироваться в cmd/parallel
-// и передаваться вниз через порт ui.Logger. См. docs/UPGRADE-SPEC.md, задачи 2.4 и 2.4a.
-var (
-	//nolint:gochecknoglobals // global singleton logger is intentional for app-wide logging
-	loggerInstance *reggol.Logger
-	//nolint:gochecknoglobals // sync.Once to protect singleton initialization
-	once sync.Once
-)
-
-// Logger возвращает общий для приложения логгер.
-func Logger() *reggol.Logger {
-	once.Do(func() {
-		loggerInstance = createLogger()
-	})
-
-	return loggerInstance
+// Field — пара «ключ-значение» для структурированной записи в лог.
+type Field struct {
+	Key string
+	Val any
 }
 
-func createLogger() *reggol.Logger {
-	trans := CreateTransformer()
-	output := reggol.NewConsoleWriter(func(w *reggol.ConsoleWriter) {
-		w.Trans = trans
-	})
-	l := reggol.New(output)
-
-	return &l
+// F собирает поле лога.
+func F(key string, val any) Field {
+	return Field{Key: key, Val: val}
 }
 
-// CreateTransformer собирает консольный трансформер с раскраской имён полей.
-func CreateTransformer() *reggol.ConsoleTransformer {
-	trans := reggol.NewConsoleTransformer(false, time.TimeOnly)
+// Logger — контракт логирования, нужный этому проекту.
+//
+// Blocks и ErrorBlocks обслуживают горячий путь вывода команд: блоки — это
+// короткие маркеры перед содержимым (имя цепочки, имя команды).
+type Logger interface {
+	Debug(msg string, fields ...Field)
+	Info(msg string, fields ...Field)
+	Warn(msg string, fields ...Field)
+	Error(err error, msg string, fields ...Field)
 
-	colorList := flow.GenColors(true)
-
-	trans.FormatFieldFn = func(i interface{}) string {
-		// Safe type handling to avoid panics on unexpected input.
-		switch list := i.(type) {
-		case [2]string:
-			// Pick a color deterministically by hashing the key to avoid any shared mutable state.
-			// This makes the transformer concurrency-safe across goroutines.
-			h := fnv.New32a()
-			_, _ = h.Write([]byte(list[0]))
-
-			idx := int(h.Sum32()) % len(colorList)
-			if idx < 0 {
-				idx = -idx
-			}
-
-			currColor := colorList[idx]
-
-			return fmt.Sprintf(`%s%s`, reggol.SetColor(list[0]+`=`, currColor, trans.IsNoColor()), list[1])
-		default:
-			return fmt.Sprintf(`%v`, i)
-		}
-	}
-
-	return &trans
+	// Blocks печатает запись без уровня: только блоки, последний из которых — содержимое.
+	Blocks(blocks ...string)
+	// ErrorBlocks печатает ошибку с предваряющими блоками.
+	ErrorBlocks(err error, blocks ...string)
 }
