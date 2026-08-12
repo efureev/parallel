@@ -1,10 +1,27 @@
 package config
 
 import (
+	"path/filepath"
 	"sort"
 
 	"github.com/efureev/parallel/internal/flow"
 )
+
+// dirResolver разрешает относительные рабочие каталоги команд от каталога
+// конфигурации.
+//
+// Абсолютные пути и пустые значения остаются как есть. Если базы нет — например,
+// конфигурация разобрана из памяти в тесте, — поведение прежнее: путь трактует
+// операционная система относительно текущего каталога процесса.
+func dirResolver(base string) func(string) string {
+	return func(dir string) string {
+		if dir == "" || base == "" || filepath.IsAbs(dir) {
+			return dir
+		}
+
+		return filepath.Join(base, dir)
+	}
+}
 
 // envPairs переводит карту переменных окружения в упорядоченный список "KEY=VALUE".
 //
@@ -50,6 +67,8 @@ func (b *FlowBuilder) Build(data Data) (flow.Flow, error) {
 		return flow.Flow{}, ErrMissingCommands
 	}
 
+	resolve := dirResolver(data.BaseDir)
+
 	result := &flow.Flow{}
 
 	for idx, chainCfg := range data.Chains {
@@ -65,6 +84,8 @@ func (b *FlowBuilder) Build(data Data) (flow.Flow, error) {
 			} else {
 				cmd = b.createRegularCommand(namedCmd.Name, namedCmd.Spec)
 			}
+
+			cmd.Dir = resolve(cmd.Dir)
 
 			chain.Add(cmd)
 		}

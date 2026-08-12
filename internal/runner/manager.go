@@ -37,11 +37,6 @@ const (
 //nolint:gochecknoglobals // неизменяемая константа-литерал, массивом её не объявить
 var newlineBytes = []byte(ui.NewlineChar)
 
-var (
-	ErrCommandExecution = errors.New("command execution failed")
-	ErrPipeCreation     = errors.New("pipe creation failed")
-)
-
 // Manager выполняет цепочки команд.
 //
 // Конструктор возвращает конкретный тип, а не интерфейс: интерфейс, объявленный
@@ -243,9 +238,10 @@ func (m *Manager) Execute(ctx context.Context, chain *flow.CommandChain, command
 	cmd.Stderr = &stderrBuf
 
 	if err := cmd.Start(); err != nil {
-		m.lgr.Error(err, "Failed to start command")
+		startErr := startError(command, err)
+		m.lgr.Error(startErr, "Failed to start command")
 
-		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
+		return startErr
 	}
 
 	m.lgr.Info("Command started: " + ui.FullDisplayName(chainName(chain), command))
@@ -257,9 +253,7 @@ func (m *Manager) Execute(ctx context.Context, chain *flow.CommandChain, command
 			return err
 		}
 
-		m.lgr.Error(err, "command failed")
-
-		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
+		return m.completionError(chain, command, err)
 	}
 
 	m.printBlock(chain, command, stdoutBuf.Bytes(), stderrBuf.Bytes())
@@ -325,9 +319,10 @@ func (m *Manager) ExecuteWithPipe(ctx context.Context, chain *flow.CommandChain,
 	defer stderr.Close()
 
 	if err := cmd.Start(); err != nil {
-		m.lgr.Error(err, "Failed starting command")
+		startErr := startError(command, err)
+		m.lgr.Error(startErr, "Failed starting command")
 
-		return fmt.Errorf("%w: %w", ErrCommandExecution, err)
+		return startErr
 	}
 
 	m.lgr.Info("Command started: " + ui.FullDisplayName(chainName(chain), command))
@@ -363,7 +358,7 @@ func (m *Manager) ExecuteWithPipe(ctx context.Context, chain *flow.CommandChain,
 			return err
 		}
 
-		return handleCommandCompletionErr(err, m.lgr)
+		return m.completionError(chain, command, err)
 	}
 
 	return nil
@@ -409,16 +404,32 @@ func (m *Manager) streamPipes(
 	return &wg
 }
 
-func handleCommandCompletionErr(waitErr error, logger ui.Logger) error {
+// startError объясняет отказ запуска.
+//
+// Несуществующий рабочий каталог операционная система сообщает как ошибку на
+// исполняемом файле: «fork/exec /bin/pwd: no such file or directory», хотя
+// отсутствует каталог, а не бинарник. Проверяем каталог и говорим прямо.
+func startError(command flow.Command, err error) error {
+	if command.Dir != "" && !flow.PathExists(command.Dir) {
+		return fmt.Errorf("%w: working directory %q does not exist", ErrCommandExecution, command.Dir)
+	}
+
+	return fmt.Errorf("%w: %w", ErrCommandExecution, err)
+}
+
+// completionError переводит отказ команды в ошибку с кодом выхода.
+func (m *Manager) completionError(chain *flow.CommandChain, command flow.Command, waitErr error) error {
 	// ExitCode() вместо syscall.WaitStatus: портируемо и не тянет платформенный
 	// пакет в кросс-платформенный файл.
 	var exitErr *exec.ExitError
 	if errors.As(waitErr, &exitErr) {
 		code := exitErr.ExitCode()
-		logger.Error(nil, "Command failed", ui.F("Exit Status", code))
+		m.lgr.Error(nil, "Command failed", ui.F("Exit Status", code))
 
-		return fmt.Errorf("%w: exit status %d", ErrCommandExecution, code)
+		return &ExitError{Chain: chainName(chain), Command: command.DisplayName(), Code: code}
 	}
+
+	m.lgr.Error(waitErr, "command failed")
 
 	return fmt.Errorf("%w: %w", ErrCommandExecution, waitErr)
 }

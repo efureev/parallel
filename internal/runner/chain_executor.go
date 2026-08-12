@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 
 	"golang.org/x/sync/errgroup"
 
@@ -55,23 +54,18 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.Comm
 
 	// Ошибки собираются отдельно от errgroup намеренно: errgroup.Wait отдаёт
 	// только первую, а нам нужны все — иначе пользователь чинит по одной
-	// проблеме за прогон. От errgroup берём другое: отмену
-	// groupCtx при первом отказе и корректное ожидание всех горутин.
-	var (
-		mu   sync.Mutex
-		errs []error
-	)
+	// проблеме за прогон. От errgroup берём другое: отмену groupCtx при первом
+	// отказе и корректное ожидание всех горутин.
+	//
+	// Слот на цепочку, а не общий срез с мьютексом: порядок ошибок обязан
+	// повторять порядок цепочек в конфигурации. Иначе он зависел бы от того,
+	// кто раньше упал, а от порядка зависит код возврата утилиты.
+	errs := make([]error, len(chains))
 
-	for _, chain := range chains {
+	for i, chain := range chains {
 		group.Go(func() error {
 			err := c.executeChain(groupCtx, chain)
-			if err != nil {
-				mu.Lock()
-
-				errs = append(errs, err)
-
-				mu.Unlock()
-			}
+			errs[i] = err
 
 			return err
 		})
@@ -134,7 +128,13 @@ func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandCha
 		firstErr error
 	)
 
-	for _, cmd := range chain.Commands() {
+	commands := chain.Commands()
+
+	// Слот на команду по той же причине, что и в ExecuteParallel: errgroup.Wait
+	// вернула бы только первую ошибку, и отказ второй pipe-команды потерялся бы.
+	pipedErrs := make([]error, len(commands))
+
+	for i, cmd := range commands {
 		if ctx.Err() != nil {
 			firstErr = ctx.Err()
 
@@ -149,7 +149,10 @@ func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandCha
 
 		if cmd.Pipe {
 			piped.Go(func() error {
-				return c.runner.ExecuteWithPipe(ctx, chain, cmd)
+				err := c.runner.ExecuteWithPipe(ctx, chain, cmd)
+				pipedErrs[i] = err
+
+				return err
 			})
 
 			continue
@@ -162,9 +165,11 @@ func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandCha
 		}
 	}
 
+	_ = piped.Wait()
+
 	// Ошибка последовательной команды идёт первой: именно она оборвала цепочку.
-	// Ошибки pipe-команд добавляются следом, ни одна не теряется.
-	return joinChainErrors(firstErr, piped.Wait())
+	// Ошибки pipe-команд добавляются следом в порядке объявления.
+	return joinChainErrors(firstErr, joinRealErrors(pipedErrs))
 }
 
 // joinChainErrors объединяет ошибку, оборвавшую цепочку, с ошибками pipe-команд,

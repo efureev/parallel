@@ -16,6 +16,12 @@ import (
 
 const shutdownGraceTimeout = 15 * time.Second
 
+// Коды возврата утилиты.
+const (
+	exitSuccess = 0
+	exitFailure = 1
+)
+
 func initializeApp(configPath string, logger ui.Logger) (*flow.Flow, error) {
 	loader := config.NewFileLoader(config.YamlFileMarshaller{})
 
@@ -150,6 +156,11 @@ func waitForCompletion(ctx context.Context, done <-chan error, logger ui.Logger)
 func Run() int {
 	flags, err := ParseFlags()
 	if err != nil {
+		// Справка уже напечатана разборщиком: это не сбой, а выполненная просьба.
+		if errors.Is(err, ErrHelpRequested) {
+			return 0
+		}
+
 		log.Printf("Failed to parse flags: %v", err)
 
 		return 1
@@ -165,7 +176,7 @@ func Run() int {
 	sigCh, stopNotify := notifyShutdown()
 	defer stopNotify()
 
-	out := ui.NewStdoutOutput()
+	out := ui.NewStdoutOutput(ui.WithLevel(flags.LogLevel))
 	// Досбрасываем буфер вывода перед выходом: иначе последние строки
 	// останутся в буфере и до пользователя не дойдут.
 	defer func() { _ = out.Close() }()
@@ -175,9 +186,13 @@ func Run() int {
 	// Ошибка уже залогирована там, где возникла, вместе с контекстом. Повторять
 	// её здесь значит печатать одно и то же дважды — с длинными сообщениями
 	// разбора конфигурации это особенно заметно.
+	//
+	// Код возврата: если упала ровно одна команда, наружу уходит её собственный
+	// код — скрипту важно именно это значение. Ошибка конфигурации и падение
+	// нескольких команд дают общий exitFailure.
 	if err := runApplication(context.Background(), sigCh, flags, logger, formatter); err != nil {
-		return 1
+		return runner.ExitCode(err, exitFailure)
 	}
 
-	return 0
+	return exitSuccess
 }

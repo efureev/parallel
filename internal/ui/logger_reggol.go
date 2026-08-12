@@ -24,15 +24,54 @@ type reggolLogger struct {
 // SyncWriter обязателен: приложение пишет в один дескриптор из множества горутин
 // (по две на каждую piped-команду), и без сериализации длинные строки разных
 // цепочек накладываются друг на друга.
-func NewLogger(out io.Writer) Logger {
-	return newLoggerOver(reggol.SyncWriter(out), isTerminal(out))
+func NewLogger(out io.Writer, opts ...Option) Logger {
+	cfg := newConfig(opts)
+
+	return newLoggerOver(reggol.SyncWriter(out), isTerminal(out), cfg.level)
+}
+
+// Option настраивает вывод.
+type Option func(*config)
+
+type config struct {
+	level Level
+}
+
+func newConfig(opts []Option) config {
+	cfg := config{level: LevelInfo}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	return cfg
+}
+
+// WithLevel задаёт минимальный уровень, попадающий в вывод.
+func WithLevel(l Level) Option {
+	return func(c *config) { c.level = l }
+}
+
+// toReggolLevel переводит уровень порта в уровень библиотеки.
+func toReggolLevel(l Level) reggol.Level {
+	switch l {
+	case LevelDebug:
+		return reggol.DebugLevel
+	case LevelInfo:
+		return reggol.InfoLevel
+	case LevelWarn:
+		return reggol.WarnLevel
+	case LevelError:
+		return reggol.ErrorLevel
+	default:
+		return reggol.InfoLevel
+	}
 }
 
 // newLoggerOver собирает логгер поверх уже потокобезопасного writer.
 //
 // colored передаётся отдельно, потому что writer к этому моменту может быть
 // обёрткой (буфером, sink'ом), по которой терминальность уже не определить.
-func newLoggerOver(out io.Writer, colored bool) Logger {
+func newLoggerOver(out io.Writer, colored bool, level Level) Logger {
 	mode := reggol.ColorNever
 	if colored {
 		mode = reggol.ColorAlways
@@ -43,7 +82,13 @@ func newLoggerOver(out io.Writer, colored bool) Logger {
 		reggol.WithConsoleOptions(reggol.WithTimeFormat(time.TimeOnly)),
 	)
 
-	l := reggol.New(out, reggol.WithEncoder(enc))
+	// Глобальный порог библиотеки по умолчанию отсекает всё ниже Info, и без
+	// его снятия наш уровень не имел бы силы: событие фильтруется дважды.
+	// Значение здесь константа, поэтому глобальное состояние не зависит от флагов —
+	// фильтрует уровень конкретного логгера.
+	reggol.SetGlobalLevel(reggol.TraceLevel)
+
+	l := reggol.New(out, reggol.WithEncoder(enc), reggol.WithLevel(toReggolLevel(level)))
 
 	return &reggolLogger{lgr: &l}
 }
@@ -73,11 +118,12 @@ func (o *Output) Formatter() *OutputFormatter { return o.formatter }
 func (o *Output) Close() error { return o.sink.Close() }
 
 // NewOutput собирает вывод поверх указанного writer.
-func NewOutput(out io.Writer) *Output {
+func NewOutput(out io.Writer, opts ...Option) *Output {
+	cfg := newConfig(opts)
 	sink := NewSink(out)
 
 	// SyncWriter поверх Sink не нужен: Sink сериализует записи сам.
-	lgr := newLoggerOver(sink, isTerminal(out))
+	lgr := newLoggerOver(sink, isTerminal(out), cfg.level)
 
 	return &Output{
 		logger:    lgr,
@@ -87,8 +133,8 @@ func NewOutput(out io.Writer) *Output {
 }
 
 // NewStdoutOutput собирает вывод для стандартного вывода процесса.
-func NewStdoutOutput() *Output {
-	return NewOutput(os.Stdout)
+func NewStdoutOutput(opts ...Option) *Output {
+	return NewOutput(os.Stdout, opts...)
 }
 
 // NewDiscardOutput собирает вывод, отбрасывающий записи: нужен тестам и бенчмаркам.

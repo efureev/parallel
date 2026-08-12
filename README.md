@@ -51,14 +51,22 @@ parallel -f examples/full.yaml    # env, dir, disable and the Docker mode
 Flags are supported currently:
 
 - `-f` — path to YAML config (defaults to `.parallelrc.yaml`)
-- `-v` — version info
+- `-log-level` — `debug`, `info` (default), `warn` or `error`
+- `-v`, `--version` — version info
+- `-h`, `--help` — usage
+
+Unknown fields in the configuration are rejected with the exact position and a suggestion:
+a typo like `pipeline:` instead of `pipe:` fails loudly instead of silently changing behaviour.
 
 ### Exit codes
 
 Parallel is CI/script friendly and reports a meaningful exit status:
 
-- `0` — all chains finished successfully (also for `-v`).
-- `1` — startup/configuration error (e.g., missing or invalid config) or a command in a chain failed.
+- `0` — all chains finished successfully (also for `-v` and `-h`).
+- `1` — startup or configuration error: missing file, unknown field, invalid flag.
+- *the command's own exit code* — when a command fails, its status is passed through, so
+  `parallel -f flow.yaml || echo $?` reports what actually happened. If several commands fail,
+  the first one in configuration order wins.
 
 This lets you safely use `parallel` in scripts and pipelines (e.g., `parallel -f flow.yaml && next-step`).
 
@@ -120,8 +128,10 @@ commands: # list of parallel command chains
 - `pipe: false` (or missing) — run sequentially, respecting the order in the chain. Output is printed as a block after
   the command finishes.
 - `cmd: ['bin', 'arg1', ...]` — regular command and its args.
-- `dir: 'path'` — working directory for the command. A path that does not exist produces a warning at startup, not an
-  error: the directory may be created by an earlier command in the chain.
+- `dir: 'path'` — working directory for the command. Relative paths are resolved against the
+  **configuration file**, not the current directory, so a config committed next to the project
+  works from anywhere. A path that does not exist produces a warning at startup, not an error:
+  the directory may be created by an earlier command in the chain.
 - `disable: true` — disable a command without removing it from config. Disabled commands are shown in the flow preview
   and are skipped during execution. Default: `false`.
 - `env: { KEY: value }` — environment variables for this command. They are **added to** the environment `parallel`
@@ -285,8 +295,8 @@ commands:
 Starting with `v1.0.0` the following is frozen and will not change without a `v2`:
 
 - **CLI flags** — `-f <path>`, `-v`, `--version`; the default config path `.parallelrc.yaml`.
-- **Exit codes** — `0` when every chain succeeded (and for `-v`); `1` on a startup/configuration
-  error or a failed command.
+- **Exit codes** — `0` on success; `1` on a startup or configuration error; a failing command's
+  own exit status is passed through.
 - **Configuration schema** — the top-level `commands` key and the command fields `cmd`, `dir`,
   `pipe`, `disable`, `env`, `format.cmdName`, `docker.*`, plus the `%CMD_NAME%` / `%CMD_ARGS%`
   placeholders.

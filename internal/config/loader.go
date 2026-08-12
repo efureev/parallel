@@ -5,6 +5,9 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/ast"
@@ -15,6 +18,13 @@ import (
 
 // commandsKey — верхнеуровневый ключ конфигурации.
 const commandsKey = "commands"
+
+// knownCommandFields — имена полей команды в том виде, в каком их пишут в YAML.
+// Список нужен только для подсказки при опечатке; источник истины — yaml-теги
+// структуры command ниже, и при добавлении поля его надо дописать сюда же.
+//
+//nolint:gochecknoglobals // неизменяемый список, массивом объявить нельзя
+var knownCommandFields = []string{"cmd", "docker", "dir", "pipe", "disable", "env", "format"}
 
 // FileMarshaller разбирает содержимое файла конфигурации.
 type FileMarshaller interface {
@@ -62,6 +72,12 @@ type ChainConfig struct {
 // Порядок цепочек и команд внутри них в точности повторяет YAML-файл.
 type Data struct {
 	Chains []ChainConfig
+
+	// BaseDir — каталог, относительно которого разрешаются относительные пути
+	// в поле dir. Это каталог самого файла конфигурации, а не текущий каталог
+	// процесса: конфигурация лежит рядом с проектом и коммитится вместе с ним,
+	// поэтому должна работать откуда угодно, а не только из «правильного» места.
+	BaseDir string
 }
 
 // FileLoader читает файл конфигурации и передаёт его разборщику.
@@ -84,6 +100,8 @@ func (l *FileLoader) Load(filePath string) (Data, error) {
 		return Data{}, fmt.Errorf("%w %s: %w", ErrConfigDecode, filePath, err)
 	}
 
+	rawConfig.BaseDir = baseDir(filePath)
+
 	return rawConfig, nil
 }
 
@@ -102,6 +120,17 @@ func (l *FileLoader) loadFile(filePath string) ([]byte, error) {
 	}
 
 	return fileContent, nil
+}
+
+// baseDir возвращает каталог файла конфигурации в абсолютном виде.
+// Если абсолютный путь получить не удалось, остаётся относительный: это хуже,
+// но лучше, чем потерять базу совсем.
+func baseDir(configPath string) string {
+	if abs, err := filepath.Abs(configPath); err == nil {
+		return filepath.Dir(abs)
+	}
+
+	return filepath.Dir(configPath)
 }
 
 // YamlFileMarshaller разбирает конфигурацию из YAML.
@@ -153,8 +182,8 @@ func parseData(body ast.Node) (Data, error) {
 			cmdName := cmdEntry.Key.GetToken().Value
 
 			var spec command
-			if err := yaml.NodeToValue(cmdEntry.Value, &spec); err != nil {
-				return Data{}, decodeError(cmdEntry.Value, cmdName, chain.Name, err)
+			if err := yaml.NodeToValue(cmdEntry.Value, &spec, yaml.Strict()); err != nil {
+				return Data{}, decodeError(cmdName, chain.Name, err)
 			}
 
 			chain.Commands = append(chain.Commands, NamedCommand{Name: cmdName, Spec: spec})
@@ -193,12 +222,102 @@ func lookup(values []*ast.MappingValueNode, key string) ast.Node {
 	return nil
 }
 
-// decodeError дополняет ошибку разбора именами команды и цепочки.
+// decodeError дополняет ошибку разбора именами команды и цепочки, а для
+// неизвестного поля — подсказкой с ближайшим известным именем.
 //
 // Позицию не приписываем: goccy уже отдаёт её точнее — с номером строки,
-// колонкой и фрагментом исходника, — а вторая пара чисел рядом только сбивала бы
-// с толку. От нас требуется контекст, которого библиотека знать не может:
-// в какой команде какой цепочки произошла ошибка.
-func decodeError(_ ast.Node, cmdName, chainName string, err error) error {
-	return fmt.Errorf("command %q in chain %q: %w", cmdName, chainName, err)
+// колонкой и фрагментом исходника. От нас требуется контекст, которого
+// библиотека знать не может: в какой команде какой цепочки произошла ошибка.
+func decodeError(cmdName, chainName string, err error) error {
+	msg := fmt.Sprintf("command %q in chain %q", cmdName, chainName)
+
+	if hint := unknownFieldHint(err); hint != "" {
+		msg += ", " + hint
+	}
+
+	return fmt.Errorf("%s: %w", msg, err)
+}
+
+// unknownFieldRe вытаскивает имя поля из сообщения goccy про неизвестное поле.
+var unknownFieldRe = regexp.MustCompile(`unknown field "([^"]+)"`)
+
+// unknownFieldHint предлагает ближайшее известное поле для опечатки.
+//
+// Без подсказки строгий разбор ловит опечатку, но не помогает её исправить:
+// «unknown field "pipeline"» оставляет пользователя гадать, как поле зовётся
+// на самом деле.
+func unknownFieldHint(err error) string {
+	m := unknownFieldRe.FindStringSubmatch(err.Error())
+	if m == nil {
+		return ""
+	}
+
+	if best := closestField(m[1]); best != "" {
+		return fmt.Sprintf("возможно, имелось в виду %q", best)
+	}
+
+	return ""
+}
+
+// closestField ищет известное поле, ближайшее к введённому.
+//
+// Два правила вместо одного. Расстояние редактирования ловит перестановки и
+// лишние буквы («diir» → «dir»), но бессильно против дописанного окончания:
+// «pipeline» отстоит от «pipe» на четыре правки, а это ровно та опечатка,
+// ради которой всё затевалось. Поэтому общий префикс считается совпадением
+// сам по себе.
+//
+// Порог расстояния намеренно низкий: при трёх «xyz» оказывается одинаково
+// близко к «env», «dir» и «cmd», и подсказка становится вредной.
+func closestField(field string) string {
+	const (
+		maxDistance  = 2
+		minPrefixLen = 3
+	)
+
+	lower := strings.ToLower(field)
+	best, bestDist := "", maxDistance+1
+
+	for _, known := range knownCommandFields {
+		if len(known) >= minPrefixLen && (strings.HasPrefix(lower, known) || strings.HasPrefix(known, lower)) {
+			return known
+		}
+
+		if d := editDistance(lower, known); d < bestDist {
+			best, bestDist = known, d
+		}
+	}
+
+	if bestDist > maxDistance {
+		return ""
+	}
+
+	return best
+}
+
+// editDistance — расстояние Левенштейна между строками.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	curr := make([]int, len(b)+1)
+
+	for j := range prev {
+		prev[j] = j
+	}
+
+	for i := 1; i <= len(a); i++ {
+		curr[0] = i
+
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+
+			curr[j] = min(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+		}
+
+		prev, curr = curr, prev
+	}
+
+	return prev[len(b)]
 }
