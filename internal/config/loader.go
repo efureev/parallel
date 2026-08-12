@@ -24,7 +24,7 @@ const commandsKey = "commands"
 // структуры command ниже, и при добавлении поля его надо дописать сюда же.
 //
 //nolint:gochecknoglobals // неизменяемый список, массивом объявить нельзя
-var knownCommandFields = []string{"cmd", "docker", "dir", "pipe", "disable", "env", "format"}
+var knownCommandFields = []string{"cmd", "run", "docker", "dir", "pipe", "disable", "env", "format"}
 
 // FileMarshaller разбирает содержимое файла конфигурации.
 type FileMarshaller interface {
@@ -47,7 +47,11 @@ type dockerCommand struct {
 }
 
 type command struct {
-	Cmd     []string `yaml:"cmd"`
+	Cmd []string `yaml:"cmd"`
+	// Run — та же команда одной строкой, разворачивается в вызов оболочки.
+	// Сахар над cmd: [ 'sh', '-c', ... ], но именно так команды пишут везде,
+	// и без него строку приходится разбивать руками.
+	Run     string `yaml:"run"`
 	Docker  *dockerCommand
 	Dir     string
 	Pipe    bool

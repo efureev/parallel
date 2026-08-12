@@ -438,6 +438,15 @@ func (m *Manager) ExecuteParallel(ctx context.Context, chains []*flow.CommandCha
 	return m.chains.ExecuteParallel(ctx, chains)
 }
 
+// Results возвращает исход каждой цепочки последнего запуска.
+//
+// Осмысленно только после возврата ExecuteParallel: до этого момента срез пуст.
+// Отдельный метод, а не второе возвращаемое значение, чтобы не переписывать
+// каждый вызов ради данных, которые нужны одному вызывающему из дюжины.
+func (m *Manager) Results() []ChainResult {
+	return m.chains.results
+}
+
 // setEnv задаёт окружение дочернего процесса.
 //
 // Если у команды нет собственных переменных, Env не трогаем вовсе: exec.Cmd

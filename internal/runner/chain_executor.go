@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 
@@ -25,6 +26,11 @@ type chainExecutor struct {
 	lgr     ui.Logger
 	runner  CommandRunner
 	stopAll stopAllFunc
+
+	// results заполняется в конце ExecuteParallel и читается уже после её
+	// возврата, поэтому синхронизации не требует: запись всех горутин
+	// упорядочена относительно чтения вызовом group.Wait.
+	results []ChainResult
 }
 
 func newChainExecutor(lgr ui.Logger, runner CommandRunner, stopAll stopAllFunc) *chainExecutor {
@@ -61,11 +67,17 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.Comm
 	// повторять порядок цепочек в конфигурации. Иначе он зависел бы от того,
 	// кто раньше упал, а от порядка зависит код возврата утилиты.
 	errs := make([]error, len(chains))
+	durations := make([]time.Duration, len(chains))
+	interrupted := make([]bool, len(chains))
 
 	for i, chain := range chains {
 		group.Go(func() error {
-			err := c.executeChain(groupCtx, chain)
+			startedAt := time.Now()
+			wasStopped, err := c.executeChain(groupCtx, chain)
+
+			durations[i] = time.Since(startedAt)
 			errs[i] = err
+			interrupted[i] = wasStopped
 
 			return err
 		})
@@ -73,7 +85,36 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.Comm
 
 	_ = group.Wait()
 
+	c.results = collectResults(chains, errs, durations, interrupted)
+
 	return joinRealErrors(errs)
+}
+
+// collectResults сводит исход каждой цепочки в один срез в порядке объявления.
+//
+// Отмена контекста ошибкой не считается и здесь: цепочка, остановленная из-за
+// отказа соседней, в сводке должна выглядеть остановленной, а не упавшей —
+// иначе один отказ выглядит как пять.
+func collectResults(
+	chains []*flow.CommandChain, errs []error, durations []time.Duration, interrupted []bool,
+) []ChainResult {
+	results := make([]ChainResult, len(chains))
+
+	for i, chain := range chains {
+		err := errs[i]
+		if errors.Is(err, context.Canceled) {
+			err = nil
+		}
+
+		results[i] = ChainResult{
+			Name:     chain.Name,
+			Err:      err,
+			Duration: durations[i],
+			Stopped:  interrupted[i],
+		}
+	}
+
+	return results
 }
 
 // joinRealErrors объединяет ошибки цепочек, отбрасывая отмену контекста:
@@ -122,7 +163,7 @@ func (c *chainExecutor) logSkipped(chain *flow.CommandChain, cmd flow.Command) {
 //
 // Отказ последовательной команды прекращает запуск следующих; уже запущенные
 // pipe-команды всё равно дожидаются.
-func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandChain) error {
+func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandChain) (stopped bool, err error) {
 	var (
 		piped    errgroup.Group
 		firstErr error
@@ -169,7 +210,12 @@ func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandCha
 
 	// Ошибка последовательной команды идёт первой: именно она оборвала цепочку.
 	// Ошибки pipe-команд добавляются следом в порядке объявления.
-	return joinChainErrors(firstErr, joinRealErrors(pipedErrs))
+	joined := joinChainErrors(firstErr, joinRealErrors(pipedErrs))
+
+	// Отмена — не отказ, но и не успех: цепочку остановил отказ соседней либо
+	// сигнал. Показать её в сводке как «ok» значило бы выдать убитое за
+	// доработавшее, а именно на сводку и смотрят, когда что-то пошло не так.
+	return ctx.Err() != nil, joined
 }
 
 // joinChainErrors объединяет ошибку, оборвавшую цепочку, с ошибками pipe-команд,

@@ -27,7 +27,7 @@ type reggolLogger struct {
 func NewLogger(out io.Writer, opts ...Option) Logger {
 	cfg := newConfig(opts)
 
-	return newLoggerOver(reggol.SyncWriter(out), isTerminal(out), cfg.level)
+	return newLoggerOver(reggol.SyncWriter(out), colorEnabled(out, cfg.forceNoColor), cfg.level)
 }
 
 // Option настраивает вывод.
@@ -35,6 +35,8 @@ type Option func(*config)
 
 type config struct {
 	level Level
+	// forceNoColor выставляется флагом --no-color и перевешивает всё остальное.
+	forceNoColor bool
 }
 
 func newConfig(opts []Option) config {
@@ -49,6 +51,11 @@ func newConfig(opts []Option) config {
 // WithLevel задаёт минимальный уровень, попадающий в вывод.
 func WithLevel(l Level) Option {
 	return func(c *config) { c.level = l }
+}
+
+// WithoutColor принудительно отключает раскраску.
+func WithoutColor() Option {
+	return func(c *config) { c.forceNoColor = true }
 }
 
 // toReggolLevel переводит уровень порта в уровень библиотеки.
@@ -122,12 +129,17 @@ func NewOutput(out io.Writer, opts ...Option) *Output {
 	cfg := newConfig(opts)
 	sink := NewSink(out)
 
+	// Решение о раскраске принимается один раз и передаётся обоим потребителям:
+	// логгеру и палитре форматтера. Иначе они могли бы разойтись, и половина
+	// вывода уехала бы в файл с ANSI-последовательностями, а половина без.
+	colored := colorEnabled(out, cfg.forceNoColor)
+
 	// SyncWriter поверх Sink не нужен: Sink сериализует записи сам.
-	lgr := newLoggerOver(sink, isTerminal(out), cfg.level)
+	lgr := newLoggerOver(sink, colored, cfg.level)
 
 	return &Output{
 		logger:    lgr,
-		formatter: newOutputFormatter(lgr, isTerminal(out)),
+		formatter: newOutputFormatter(lgr, colored),
 		sink:      sink,
 	}
 }
@@ -194,17 +206,28 @@ func apply(e *reggol.Event, fields []Field) *reggol.Event {
 	return e
 }
 
-// colorMode переводит решение о раскраске в термины библиотеки.
+// colorEnabled решает, раскрашивать ли вывод.
 //
-// Решение принимается здесь явно, а не оставляется на ColorAuto, потому что
-// тот же ответ нужен палитре в OutputFormatter: раскраска должна включаться
-// и выключаться в обоих местах одинаково.
-func colorMode(out io.Writer) reggol.ColorMode {
-	if isTerminal(out) {
-		return reggol.ColorAlways
+// Порядок проверок — от самого явного намерения к самому косвенному:
+// флаг сильнее переменной окружения, переменная сильнее автоопределения.
+// NO_COLOR и FORCE_COLOR — сложившийся межпрограммный стандарт (no-color.org):
+// пользователь задаёт их один раз на всю оболочку и вправе ждать, что утилита
+// подчинится, не разбираясь в её собственных флагах.
+func colorEnabled(out io.Writer, forceNoColor bool) bool {
+	if forceNoColor {
+		return false
 	}
 
-	return reggol.ColorNever
+	// Значение не важно: стандарт требует реагировать на само присутствие.
+	if _, set := os.LookupEnv("NO_COLOR"); set {
+		return false
+	}
+
+	if v, set := os.LookupEnv("FORCE_COLOR"); set && v != "0" {
+		return true
+	}
+
+	return isTerminal(out)
 }
 
 // isTerminal сообщает, является ли назначение вывода терминалом.

@@ -60,9 +60,26 @@ Flags are supported currently:
 
 - `-f` — path to YAML config; if omitted, `.parallelrc.yaml` / `.parallelrc.yml` is looked up
   in the current directory and every parent
+- `-except <names>` — comma-separated chains to skip
+- `-list` — list the chains the configuration defines, then exit
+- `-dry-run` — show exactly what would run, then exit without starting anything
+- `-no-color` — disable colored output
 - `-log-level` — `debug`, `info` (default), `warn` or `error`
 - `-v`, `--version` — version info
 - `-h`, `--help` — usage
+
+Positional arguments select chains, and `--` switches to running commands with no config at all:
+
+```shell
+parallel api ui                              # run only these chains
+parallel -except worker                      # everything but this one
+parallel -list                               # what does this configuration define?
+parallel -dry-run api                        # what exactly would `parallel api` run?
+parallel -- 'go run ./cmd/api' 'yarn dev'    # no configuration file at all
+```
+
+Colors follow the [NO_COLOR](https://no-color.org) convention: setting `NO_COLOR` disables them,
+`FORCE_COLOR` enables them when the output is not a terminal, and `-no-color` overrides both.
 
 Unknown fields in the configuration are rejected with the exact position and a suggestion:
 a typo like `pipeline:` instead of `pipe:` fails loudly instead of silently changing behaviour.
@@ -78,6 +95,21 @@ Parallel is CI/script friendly and reports a meaningful exit status:
   the first one in configuration order wins.
 
 This lets you safely use `parallel` in scripts and pipelines (e.g., `parallel -f flow.yaml && next-step`).
+
+### Summary
+
+When a run involves more than one chain, a summary is printed at the end — the run is over, the
+output of five chains is interleaved, and this answers "so which one broke?" without scrolling:
+
+```
+Summary:
+  api     ok       1.2s
+  worker  failed   0.3s  command execution failed: command "bad" in chain "worker" exited with status 42
+  ui      stopped  0.3s
+```
+
+`stopped` means the chain did not fail on its own — it was cut short, either by a sibling chain
+failing or by Ctrl+C.
 
 ## Screenshots
 
@@ -136,7 +168,12 @@ commands: # list of parallel command chains
   piped commands to finish before completing.
 - `pipe: false` (or missing) — run sequentially, respecting the order in the chain. Output is printed as a block after
   the command finishes.
-- `cmd: ['bin', 'arg1', ...]` — regular command and its args.
+- `cmd: ['bin', 'arg1', ...]` — regular command and its args. Taken literally: no shell is
+  involved, so `&&`, pipes and globs are not interpreted.
+- `run: 'npm run dev'` — the same command as a single line, executed through the shell
+  (`sh -c` on Unix, `%COMSPEC% /c` on Windows). Use it when you want `&&`, a pipe, a glob or
+  variable expansion. Mutually exclusive with `cmd` — specifying both is an error rather than a
+  silent preference for one of them.
 - `dir: 'path'` — working directory for the command. Relative paths are resolved against the
   **configuration file**, not the current directory, so a config committed next to the project
   works from anywhere. A path that does not exist produces a warning at startup, not an error:
@@ -331,11 +368,13 @@ commands:
 
 Starting with `v1.0.0` the following is frozen and will not change without a `v2`:
 
-- **CLI flags** — `-f <path>`, `-v`, `--version`; the default config name `.parallelrc.yaml`
+- **CLI flags** — `-f <path>`, `-v`, `--version`, `-list`, `-dry-run`, `-except`, `-no-color`;
+  positional arguments select chains and `--` starts config-less mode; the default config name
+  `.parallelrc.yaml`
   (`.parallelrc.yml` is also accepted), looked up in the current directory and its parents.
 - **Exit codes** — `0` on success; `1` on a startup or configuration error; a failing command's
   own exit status is passed through.
-- **Configuration schema** — the top-level `commands` key and the command fields `cmd`, `dir`,
+- **Configuration schema** — the top-level `commands` key and the command fields `cmd`, `run`, `dir`,
   `pipe`, `disable`, `env`, `format.cmdName`, `docker.*`, plus the `%CMD_NAME%` / `%CMD_ARGS%`
   placeholders.
 - **Execution semantics** — chains run in parallel; inside a chain non-`pipe` commands run

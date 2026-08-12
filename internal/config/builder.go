@@ -1,11 +1,15 @@
 package config
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 
 	"github.com/efureev/parallel/internal/flow"
 )
+
+// cmdNameOnly — шаблон отображаемого имени без аргументов.
+const cmdNameOnly = "%CMD_NAME%"
 
 // dirResolver разрешает относительные рабочие каталоги команд от каталога
 // конфигурации.
@@ -79,10 +83,14 @@ func (b *FlowBuilder) Build(data Data) (flow.Flow, error) {
 
 		for _, namedCmd := range chainCfg.Commands {
 			var cmd flow.Command
+
 			if namedCmd.Spec.Docker != nil {
 				cmd = b.createDockerCommand(namedCmd.Name, namedCmd.Spec)
 			} else {
-				cmd = b.createRegularCommand(namedCmd.Name, namedCmd.Spec)
+				var err error
+				if cmd, err = b.createRegularCommand(namedCmd.Name, namedCmd.Spec); err != nil {
+					return flow.Flow{}, fmt.Errorf("chain %q, command %q: %w", chainCfg.Name, namedCmd.Name, err)
+				}
 			}
 
 			cmd.Dir = resolve(cmd.Dir)
@@ -147,13 +155,35 @@ func (b *FlowBuilder) createDockerCommand(cmdName string, cmdRaw command) flow.C
 	}
 }
 
-func (b *FlowBuilder) createRegularCommand(cmdName string, cmdRaw command) flow.Command {
+// createRegularCommand собирает обычную команду из формы cmd или run.
+//
+// Обе формы разом — почти наверняка недосмотр при правке конфигурации, и молча
+// предпочесть одну значило бы выполнить не то, что написано.
+func (b *FlowBuilder) createRegularCommand(cmdName string, cmdRaw command) (flow.Command, error) {
 	var (
 		cmdStr string
 		args   []string
 	)
 
-	if len(cmdRaw.Cmd) > 0 {
+	format := cmdRaw.Format.CmdName
+
+	switch {
+	case len(cmdRaw.Cmd) > 0 && cmdRaw.Run != "":
+		return flow.Command{}, ErrCmdAndRun
+
+	case cmdRaw.Run != "":
+		cmdStr, args = shellCommand(cmdRaw.Run)
+
+		// У shell-формы аргумент ровно один — вся команда целиком, — и в
+		// префиксе каждой строки вывода он превращается в шум вида
+		// «api > serve -c echo one && echo two (0) > one». Поэтому по умолчанию
+		// показываем только имя; явный формат из конфигурации остаётся за
+		// пользователем.
+		if format == "" {
+			format = cmdNameOnly
+		}
+
+	case len(cmdRaw.Cmd) > 0:
 		cmdStr = cmdRaw.Cmd[0]
 		if len(cmdRaw.Cmd) > 1 {
 			args = cmdRaw.Cmd[1:]
@@ -168,6 +198,6 @@ func (b *FlowBuilder) createRegularCommand(cmdName string, cmdRaw command) flow.
 		Pipe:    cmdRaw.Pipe,
 		Disable: cmdRaw.Disable,
 		Env:     envPairs(cmdRaw.Env),
-		Format:  flow.Format{CmdName: cmdRaw.Format.CmdName},
-	}
+		Format:  flow.Format{CmdName: format},
+	}, nil
 }

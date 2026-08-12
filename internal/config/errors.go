@@ -18,6 +18,10 @@ var (
 	ErrConfigRead = errors.New("cannot read config file")
 	// ErrConfigDecode — содержимое файла не удалось разобрать.
 	ErrConfigDecode = errors.New("cannot decode config file")
+	// ErrNoAdHocCommands — команды после `--` не заданы или пусты.
+	ErrNoAdHocCommands = errors.New("no commands to run")
+	// ErrCmdAndRun — заданы одновременно cmd и run.
+	ErrCmdAndRun = errors.New("command cannot use both 'cmd' and 'run'")
 	// ErrMissingCommands — в конфигурации нет верхнеуровневого ключа commands.
 	ErrMissingCommands = errors.New("config must contain the 'commands' key")
 )

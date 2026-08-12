@@ -53,26 +53,43 @@ func resolveConfigPath(configPath string, logger ui.Logger) (string, error) {
 	return found, nil
 }
 
-func initializeApp(configPath string, logger ui.Logger) (*flow.Flow, error) {
-	resolved, err := resolveConfigPath(configPath, logger)
+// loadFlow собирает Flow: либо из команд, переданных после `--`, либо из файла
+// конфигурации.
+func loadFlow(flags *Config, logger ui.Logger) (flow.Flow, error) {
+	if len(flags.AdHoc) > 0 {
+		return config.AdHoc(flags.AdHoc)
+	}
+
+	resolved, err := resolveConfigPath(flags.ConfigFilePath, logger)
 	if err != nil {
 		logger.Error(err, "Failed to locate configuration file")
 
-		return nil, err
+		return flow.Flow{}, err
 	}
 
-	loader := config.NewFileLoader(config.YamlFileMarshaller{})
-
-	configData, err := loader.Load(resolved)
+	configData, err := config.NewFileLoader(config.YamlFileMarshaller{}).Load(resolved)
 	if err != nil {
 		logger.Error(err, "Failed to load configuration file")
 
+		return flow.Flow{}, err
+	}
+
+	return config.NewFlowBuilder().Build(configData)
+}
+
+func initializeApp(flags *Config, logger ui.Logger) (*flow.Flow, error) {
+	result, err := loadFlow(flags, logger)
+	if err != nil {
+		logger.Error(err, "Invalid configuration")
+
 		return nil, err
 	}
 
-	result, err := config.NewFlowBuilder().Build(configData)
+	// Отбор идёт до валидации: она обязана относиться к тому, что реально
+	// запустится, иначе исключённая цепочка мешала бы запуску остальных.
+	result, err = flow.Select(result, flags.Chains, flags.Except)
 	if err != nil {
-		logger.Error(err, "Invalid configuration")
+		logger.Error(err, "Invalid chain selection")
 
 		return nil, err
 	}
@@ -96,6 +113,29 @@ func initializeApp(configPath string, logger ui.Logger) (*flow.Flow, error) {
 	return &result, nil
 }
 
+// preview обслуживает режимы, которые ничего не запускают, и сообщает, надо ли
+// на этом остановиться.
+func preview(flags *Config, result *flow.Flow, logger ui.Logger) (done bool) {
+	reader := ui.NewFlowReader(logger)
+
+	if flags.List {
+		reader.List(result)
+
+		return true
+	}
+
+	reader.Out(result)
+
+	// Предпросмотр уже напечатан — в режиме --dry-run это и есть весь результат.
+	if flags.DryRun {
+		logger.Info("Dry run: nothing was started")
+
+		return true
+	}
+
+	return false
+}
+
 // runApplication поднимает конфигурацию, запускает выполнение и обслуживает
 // сигналы завершения.
 func runApplication(
@@ -105,14 +145,16 @@ func runApplication(
 	logger ui.Logger,
 	formatter *ui.OutputFormatter,
 ) error {
-	result, err := initializeApp(flags.ConfigFilePath, logger)
+	result, err := initializeApp(flags, logger)
 	if err != nil {
 		return err
 	}
 
 	logger.Debug("Config was loaded...")
 
-	ui.NewFlowReader(logger).Out(result)
+	if preview(flags, result, logger) {
+		return nil
+	}
 
 	manager := runner.NewManager(logger, formatter)
 
@@ -143,13 +185,43 @@ func runApplication(
 		done <- manager.ExecuteParallel(ctx, result.Chains)
 	}()
 
-	if err := waitForCompletion(ctx, done, logger); err != nil {
-		return err
+	waitErr := waitForCompletion(ctx, done, logger)
+
+	// Сводка печатается и при отказе, и при остановке по сигналу: именно тогда
+	// она и нужна — понять, какая из цепочек не доехала.
+	ui.PrintSummary(logger, summaryRows(manager.Results(), ctx.Err() != nil))
+
+	if waitErr != nil {
+		return waitErr
 	}
 
 	logger.Debug("App Finished")
 
 	return nil
+}
+
+// summaryRows переводит исход цепочек в строки сводки.
+//
+// Решение о статусе принимается здесь, а не в ui: слой представления не должен
+// знать ни про ошибки исполнения, ни про то, что означает отмена контекста.
+func summaryRows(results []runner.ChainResult, interrupted bool) []ui.SummaryRow {
+	rows := make([]ui.SummaryRow, 0, len(results))
+
+	for _, res := range results {
+		row := ui.SummaryRow{Name: res.Name, Status: ui.StatusOK, Duration: res.Duration}
+
+		switch {
+		case res.Failed():
+			row.Status, row.Reason = ui.StatusFailed, res.Err.Error()
+		case res.Stopped || interrupted:
+			// Цепочка не упала, но и до конца не дошла: её остановил сигнал.
+			row.Status = ui.StatusStopped
+		}
+
+		rows = append(rows, row)
+	}
+
+	return rows
 }
 
 // waitForCompletion ждёт окончания выполнения либо отмены по сигналу.
@@ -214,7 +286,12 @@ func Run() int {
 	sigCh, stopNotify := notifyShutdown()
 	defer stopNotify()
 
-	out := ui.NewStdoutOutput(ui.WithLevel(flags.LogLevel))
+	outOpts := []ui.Option{ui.WithLevel(flags.LogLevel)}
+	if flags.NoColor {
+		outOpts = append(outOpts, ui.WithoutColor())
+	}
+
+	out := ui.NewStdoutOutput(outOpts...)
 	// Досбрасываем буфер вывода перед выходом: иначе последние строки
 	// останутся в буфере и до пользователя не дойдут.
 	defer func() { _ = out.Close() }()

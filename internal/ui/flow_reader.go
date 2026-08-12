@@ -70,3 +70,43 @@ func (f *FlowReader) Out(fl *flow.Flow) {
 
 	f.lgr.Info(b.String())
 }
+
+// List печатает состав конфигурации: имена цепочек и их размер.
+//
+// Отдельно от Out: полный предпросмотр отвечает на вопрос «что именно
+// выполнится», а этот — на вопрос «что вообще определено», с которого начинают
+// в чужом проекте. Имена печатаются так, как их принимает отбор в командной
+// строке, чтобы их можно было скопировать напрямую.
+func (f *FlowReader) List(fl *flow.Flow) {
+	if fl == nil || len(fl.Chains) == 0 {
+		f.lgr.Warn("Flow has no chains defined")
+
+		return
+	}
+
+	var b strings.Builder
+
+	b.WriteString("Chains:\n")
+
+	for _, chain := range fl.Chains {
+		commands := chain.Commands()
+
+		disabled := 0
+
+		for _, cmd := range commands {
+			if cmd.Disable {
+				disabled++
+			}
+		}
+
+		b.WriteString(fmt.Sprintf("  %s (%d)", chain.Name, len(commands)))
+
+		if disabled > 0 {
+			b.WriteString(fmt.Sprintf(", %d disabled", disabled))
+		}
+
+		b.WriteString("\n")
+	}
+
+	f.lgr.Info(strings.TrimRight(b.String(), "\n"))
+}
