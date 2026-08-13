@@ -118,7 +118,7 @@ func TestExecuteParallel_ReadyOpensGateBeforeCompletion(t *testing.T) {
 	defer ln.Close()
 
 	runner := newRecordingRunner()
-	runner.hold["db"] = 2 * time.Second // «сервер» работает долго
+	runner.hold["db"] = 400 * time.Millisecond // «сервер» работает дольше проверки
 
 	exec := newChainExecutor(ui.NewDiscardLogger(), runner, nil)
 
@@ -143,8 +143,8 @@ func TestExecuteParallel_ReadyOpensGateBeforeCompletion(t *testing.T) {
 	}
 
 	// Порт слушается сразу, поэтому api обязан стартовать заметно раньше, чем
-	// через две секунды удержания db.
-	if delay := runner.startedAt("api").Sub(start); delay > time.Second {
+	// закончится удержание db.
+	if delay := runner.startedAt("api").Sub(start); delay > 150*time.Millisecond {
 		t.Errorf("api ждал %s — похоже, ждали завершения db, а не готовности", delay)
 	}
 }
