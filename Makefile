@@ -7,7 +7,7 @@ DC_GO_RUN = docker-compose run $(DC_BASE_ARGS) go
 DC_LINT_RUN = docker-compose run --rm --no-deps golint
 
 
-.PHONY : help fmt lint gotest test clean
+.PHONY : help fmt lint gotest cover test clean
 .DEFAULT_GOAL : help
 .SILENT : lint gotest
 
@@ -29,6 +29,9 @@ lint: ## Run go linters
 # Testing
 gotest: ## Run go tests
 	docker-compose run $(DC_BASE_ARGS) -e CGO_ENABLED=1 go go test -v -race -shuffle=on -timeout 30s ./...
+
+cover: ## Check per-package coverage thresholds
+	./coverage.sh
 
 test: lint gotest ## Run go tests and linters
 

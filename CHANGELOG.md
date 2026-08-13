@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never expanded and travelled into the command argument as text. Refusing it outright is louder
   than a quietly wrong value. Unrecognised shell forms such as `${#arr[@]}` still pass through
   untouched — they are valid syntax inside `cmd`.
+- **Per-package coverage thresholds,** in `.coverage-thresholds` and enforced by `coverage.sh`
+  in CI. A single repository-wide number hides what matters: coverage lost in the domain is
+  offset by a gain somewhere else and the figure stays green. Each layer now has its own floor,
+  and lowering one is a visible edit rather than a silent drift.
 - **A container image at `ghcr.io/efureev/parallel`,** built for `linux/amd64` and
   `linux/arm64` on every release tag. `docker run --rm -v "$PWD:/work" ghcr.io/efureev/parallel`
   picks up the configuration the usual way, since `/work` is the working directory.

@@ -121,6 +121,11 @@ Plus a commented example in `examples/full.yaml`. Field names are camelCase (`re
   its siblings, so a test that assumes both got far enough is a flaky test, not a slow one.
 - Timeouts are injected (`WithTimeouts`), not hard-coded — tests run on milliseconds. No single
   test should take longer than half a second.
+- **Coverage has a floor per package**, listed in `.coverage-thresholds` and checked by
+  `make cover` (and by CI, on pull requests too). The limits differ by layer on purpose: the
+  domain and the config parser are held near-total, `cli` is not, because it is wiring that is
+  exercised through `runner`. Dropping a limit is a deliberate edit in the same commit, with the
+  reason in the commit message — not a silent drift.
 
 ## Style
 
