@@ -117,27 +117,59 @@ type readyCondition struct {
 	Timeout time.Duration `yaml:"timeout"`
 }
 
-// stringList принимает и одиночное значение, и список: envFile пишут обеими
-// формами, и требовать список ради одного файла было бы придиркой.
+// stringList принимает и одиночное значение, и список: envFile и needs пишут
+// обеими формами, и требовать список ради одного файла было бы придиркой.
 type stringList []string
 
-// UnmarshalYAML реализует goccy-интерфейс InterfaceUnmarshaler.
-func (l *stringList) UnmarshalYAML(unmarshal func(any) error) error {
-	var single string
-	if err := unmarshal(&single); err == nil {
-		*l = stringList{single}
+// UnmarshalYAML разбирает узел сам, а не пробует декодировать его в строку
+// и в срез по очереди.
+//
+// Причина не в красоте: на входе `needs: !00` — теговый узел без значения —
+// декодирование в срез роняло библиотеку нулевым разыменованием
+// (`ast.(*ArrayNodeIter).Len`). Найдено фаззингом. Разбирая узел по типу, мы
+// просто не отдаём библиотеке то, на чём она падает.
+func (l *stringList) UnmarshalYAML(node ast.Node) error {
+	if seq, ok := node.(*ast.SequenceNode); ok {
+		out := make(stringList, 0, len(seq.Values))
+
+		for _, item := range seq.Values {
+			value, err := scalarString(item)
+			if err != nil {
+				return err
+			}
+
+			out = append(out, value)
+		}
+
+		*l = out
 
 		return nil
 	}
 
-	var many []string
-	if err := unmarshal(&many); err != nil {
+	value, err := scalarString(node)
+	if err != nil {
 		return err
 	}
 
-	*l = many
+	*l = stringList{value}
 
 	return nil
+}
+
+// scalarString достаёт строковое значение из скалярного узла.
+//
+// Всё, что не скаляр и не последовательность, — отказ с указанием, что было
+// на самом деле: сообщение библиотеки про типы Go здесь ничего не объясняет.
+func scalarString(node ast.Node) (string, error) {
+	switch n := node.(type) {
+	case *ast.StringNode:
+		return n.Value, nil
+	case *ast.IntegerNode, *ast.FloatNode, *ast.BoolNode:
+		return node.GetToken().Value, nil
+	default:
+		return "", fmt.Errorf("%w: expected a string or a list of strings, got %s",
+			ErrConfigDecode, node.Type())
+	}
 }
 
 // NamedCommand связывает спецификацию команды с её именем, сохраняя порядок.
@@ -242,11 +274,28 @@ func baseDir(configPath string) string {
 type YamlFileMarshaller struct {
 }
 
-func (l YamlFileMarshaller) Unmarshal(b []byte) (Data, error) {
-	file, err := parser.ParseBytes(b, 0)
-	if err != nil {
+func (l YamlFileMarshaller) Unmarshal(b []byte) (cfg Data, err error) {
+	// Разбор конфигурации — единственное место, куда попадают недоверенные
+	// данные, и падать здесь нельзя: пользователь должен получить ошибку
+	// с указанием места, а не stack trace.
+	//
+	// Защита не теоретическая. goccy роняет nil-разыменованием любое поле-срез
+	// с теговым узлом (`ast.(*ArrayNodeIter).Len`), причём не только на битом
+	// вводе: `cmd: !!str x` — валидный YAML. Найдено фаззингом; собственный
+	// разбор stringList такой узел обходит, но `cmd`, `ports`, `volumes`,
+	// `args` и `ready.exec` декодирует сама библиотека.
+	defer func() {
+		if r := recover(); r != nil {
+			cfg, err = Data{}, fmt.Errorf(
+				"%w (an explicit YAML tag such as !!str on a list field is a known cause): %v",
+				ErrConfigParse, r)
+		}
+	}()
+
+	file, parseErr := parser.ParseBytes(b, 0)
+	if parseErr != nil {
 		// Ошибка разбора от goccy уже содержит строку, колонку и фрагмент исходника.
-		return Data{}, err
+		return Data{}, parseErr
 	}
 
 	if len(file.Docs) == 0 || file.Docs[0].Body == nil {

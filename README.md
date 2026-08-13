@@ -344,6 +344,9 @@ Three rules worth knowing:
 - **An undefined variable with no default is an error** naming the variable, not an empty string:
   an empty string quietly breaks paths and addresses, and you find out from the behaviour of the
   command rather than from the message.
+- **Substitutions do not nest.** `${A:-${B:-x}}` is refused: the default runs to the first
+  closing brace, so the inner reference would survive into the argument as text. Shell forms
+  that this syntax does not recognise, such as `${#arr[@]}`, are passed through untouched.
 
 A `.env` file is read as: full-line `#` comments and blank lines are skipped, an optional
 `export ` prefix is dropped, the line is split at the **first** `=`, and a value wrapped in

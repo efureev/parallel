@@ -22,6 +22,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   One consequence worth knowing: with `-keep-going` a failing chain no longer cuts short a
   long-running sibling, so a run that includes a dev server will not finish on its own.
+- **A crash on a valid configuration.** A YAML tag on a list field — `cmd: !!str x`, and the
+  same for `ports`, `volumes`, `args`, `ready.exec` and `needs` — made the parser dereference a
+  nil pointer deep inside the YAML library, so the tool died with a stack trace instead of
+  pointing at the line. Found by fuzzing. Parsing is now guarded: a parser crash becomes an
+  ordinary configuration error naming the known cause, and `needs`/`envFile` decode their node
+  directly rather than handing the library something it chokes on.
+- **Nested substitution is now an error.** `${A:-${B:-x}}` used to produce the literal string
+  `${B:-x}`: the default is delimited by the first closing brace, so the inner reference was
+  never expanded and travelled into the command argument as text. Refusing it outright is louder
+  than a quietly wrong value. Unrecognised shell forms such as `${#arr[@]}` still pass through
+  untouched — they are valid syntax inside `cmd`.
 - **`CONTRIBUTING.md`.** The requirements here are stricter than usual and none of them are
   visible from the code: the linter must be run through `make lint` rather than from `PATH`,
   `GOOS=windows go vet` catches breakage the local build never will, layer boundaries are

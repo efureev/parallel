@@ -16,6 +16,8 @@ var (
 	ErrConfigNotFound = errors.New("config file not found")
 	// ErrConfigRead — файл существует, но прочитать его не удалось.
 	ErrConfigRead = errors.New("cannot read config file")
+	// ErrConfigParse — разборщик YAML упал на этом вводе.
+	ErrConfigParse = errors.New("cannot parse config file")
 	// ErrConfigDecode — содержимое файла не удалось разобрать.
 	ErrConfigDecode = errors.New("cannot decode config file")
 	// ErrNoAdHocCommands — команды после `--` не заданы или пусты.
@@ -24,6 +26,8 @@ var (
 	ErrEnvFileRead = errors.New("cannot read env file")
 	// ErrEnvFileSyntax — строка файла переменных не разбирается.
 	ErrEnvFileSyntax = errors.New("malformed env file line")
+	// ErrNestedPlaceholder — подстановка внутри умолчания другой подстановки.
+	ErrNestedPlaceholder = errors.New("nested substitution is not supported")
 	// ErrUndefinedVariable — ссылка на переменную без значения и без умолчания.
 	ErrUndefinedVariable = errors.New("undefined variable")
 	// ErrNegativeValue — числовое поле получило отрицательное значение.

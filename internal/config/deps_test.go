@@ -141,3 +141,28 @@ func TestBuild_ReadyValidated(t *testing.T) {
 		t.Errorf("невнятное сообщение: %v", err)
 	}
 }
+
+// TestUnmarshal_TaggedNodeDoesNotPanic — разбор конфигурации не имеет права
+// падать: это единственное место, куда попадают недоверенные данные.
+//
+// Поводом стал не битый ввод, а валидный YAML: goccy роняет nil-разыменованием
+// любое поле-срез с теговым узлом. Найдено фаззингом (FuzzUnmarshal).
+func TestUnmarshal_TaggedNodeDoesNotPanic(t *testing.T) {
+	tests := map[string]string{
+		"явный тег на списке": "commands:\n  c:\n    t:\n      cmd: !!str x\n",
+		"тег без значения":    "commands:\n  c:\n    t:\n      cmd: !00\n",
+		"тег в ready.exec":    "commands:\n  c:\n    t:\n      cmd: [x]\n      ready:\n        exec: !00\n",
+		"тег в docker.ports":  "commands:\n  c:\n    t:\n      docker:\n        image: {name: n}\n        ports: !00\n",
+		"тег в needs":         "commands:\n  c:\n    needs: !00\n    t:\n      cmd: [x]\n",
+	}
+
+	for name, raw := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Отсутствие паники — половина требования; вторая половина в том,
+			// что вызывающий получает ошибку, а не молча пустую конфигурацию.
+			if _, err := (YamlFileMarshaller{}).Unmarshal([]byte(raw)); err == nil {
+				t.Error("теговый узел принят без ошибки")
+			}
+		})
+	}
+}

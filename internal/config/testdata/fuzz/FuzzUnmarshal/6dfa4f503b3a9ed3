@@ -1,0 +1,2 @@
+go test fuzz v1
+string("commands:\n 0:\n    needs: !00\n00000: 000000000000")

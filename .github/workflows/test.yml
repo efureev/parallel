@@ -64,6 +64,29 @@ jobs:
         with:
           go-version-file: 'go.mod'
 
+  fuzz:
+    name: Fuzz config parsing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      # Короткий прогон на каждый push: разбор конфигурации — единственное
+      # место, куда попадают недоверенные данные, и паника там означает
+      # stack trace вместо ошибки с указанием строки. Длинные прогоны
+      # запускаются руками; найденное падение приезжает файлом в
+      # testdata/fuzz/ и коммитится, иначе тот же вход придётся искать заново.
+      - name: Fuzz parsers
+        run: |
+          set -euo pipefail
+          for target in FuzzUnmarshal FuzzParseDotEnv FuzzExpand; do
+            echo "::group::$target"
+            go test ./internal/config/ -run "^$target$" -fuzz "^$target$" -fuzztime 30s
+            echo "::endgroup::"
+          done
+
   coverage:
     runs-on: ubuntu-latest
     if: github.event_name == 'push'

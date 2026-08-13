@@ -23,7 +23,7 @@ func expand(s string, lookup map[string]string) (string, error) {
 		return s, nil
 	}
 
-	var missing []string
+	var missing, nested []string
 
 	result := placeholderRe.ReplaceAllStringFunc(s, func(match string) string {
 		// $${VAR} — способ написать литеральную ${VAR}: снимаем один доллар
@@ -34,6 +34,16 @@ func expand(s string, lookup map[string]string) (string, error) {
 
 		groups := placeholderRe.FindStringSubmatch(match)
 		name, hasDefault, fallback := groups[1], groups[2] != "", groups[3]
+
+		// Вложенная форма: умолчание ограничено первой закрывающей скобкой,
+		// поэтому ${A:-${B:-x}} раскрылось бы в «${B:-x}» — строку с недобитой
+		// подстановкой, которая уехала бы в аргумент команды буквально.
+		// Отказ громче тихо неверного результата.
+		if hasDefault && strings.Contains(fallback, "${") {
+			nested = append(nested, name)
+
+			return ""
+		}
 
 		if value, ok := lookup[name]; ok {
 			return value
@@ -47,6 +57,10 @@ func expand(s string, lookup map[string]string) (string, error) {
 
 		return ""
 	})
+
+	if len(nested) > 0 {
+		return "", fmt.Errorf("%w: %s", ErrNestedPlaceholder, strings.Join(nested, ", "))
+	}
 
 	if len(missing) > 0 {
 		return "", fmt.Errorf("%w: %s", ErrUndefinedVariable, strings.Join(missing, ", "))
