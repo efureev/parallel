@@ -33,6 +33,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never expanded and travelled into the command argument as text. Refusing it outright is louder
   than a quietly wrong value. Unrecognised shell forms such as `${#arr[@]}` still pass through
   untouched — they are valid syntax inside `cmd`.
+- **A container image at `ghcr.io/efureev/parallel`,** built for `linux/amd64` and
+  `linux/arm64` on every release tag. `docker run --rm -v "$PWD:/work" ghcr.io/efureev/parallel`
+  picks up the configuration the usual way, since `/work` is the working directory.
+
+  The base is Alpine rather than `scratch` or distroless, and not out of caution: the tool runs
+  other people's commands, and both `run:` and the `--` form expand to `sh -c`. Without a shell
+  in the image half the configuration schema would not work at all. Commands run as an
+  unprivileged uid; the `docker:` section needs a mounted socket and a client, which the image
+  deliberately does not carry.
 - **`CONTRIBUTING.md`.** The requirements here are stricter than usual and none of them are
   visible from the code: the linter must be run through `make lint` rather than from `PATH`,
   `GOOS=windows go vet` catches breakage the local build never will, layer boundaries are

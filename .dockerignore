@@ -1,0 +1,15 @@
+# Всё, что не нужно сборке: контекст меньше — слой кеша стабильнее.
+.git
+.github
+.claude
+.assets
+docs
+build
+*.md
+!go.mod
+Makefile
+build.sh
+docker-compose.yml
+.golangci.yml
+.gitignore
+.DS_Store

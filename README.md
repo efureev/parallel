@@ -154,6 +154,28 @@ keep running while the attempts last.
 failing or by Ctrl+C. `timed out` means a command exceeded its limit and was stopped. `skipped`
 means the chain never started, because something it `needs` failed or never became ready.
 
+### Running from a container image
+
+```shell
+docker run --rm -v "$PWD:/work" ghcr.io/efureev/parallel
+```
+
+The image is published for `linux/amd64` and `linux/arm64` on every release tag. Your project
+is mounted at `/work`, which is the working directory, so the configuration is found the usual
+way — in that directory or any parent.
+
+Two things are worth knowing before you rely on it.
+
+- **The `docker:` section does not work inside the image.** It builds a `docker` command line,
+  and the image has neither the client nor access to a daemon. Mounting the socket and
+  installing the client makes it work, but that is your call to make deliberately, not
+  something the image does for you.
+- **Commands run as uid 10001, not root.** If a command needs to write into the mounted
+  directory, either the directory must be writable by that uid or you pass `--user "$(id -u)"`.
+
+Everything else behaves exactly as it does natively: `run:`, ad-hoc commands after `--`,
+`needs` and `ready` all work, because the image is Alpine-based and has a shell.
+
 ## Screenshots
 
 ![screen1.png](.assets%2Fscreen1.png)
