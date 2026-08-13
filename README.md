@@ -312,24 +312,34 @@ When `docker` section is used, the tool builds the final `docker` command for yo
 this, Docker commands start concurrently and the chain waits for them to finish.
 
 `env` is turned into `-e KEY=VALUE` arguments, so the variables reach the **container** rather
-than the `docker` client process:
+than the `docker` client process. Beyond the image the mode also understands `ports`, `volumes`,
+`network` and `args`:
 
 ```yaml
 commands:
   services:
-    cache:
+    db:
       docker:
-        image:
-          name: redis
-        ports: [ '6379:6379' ]
+        image: { name: postgres, tag: '17' }
+        ports: [ '5432:5432' ]
+        volumes: [ './data:/var/lib/postgresql/data' ]
+        network: app-net
+        args: [ '-c', 'max_connections=200' ]   # the container's own command
       env:
-        REDIS_ARGS: '--save 60 1'
+        POSTGRES_PASSWORD: secret
 ```
 
-builds `docker run --name cache --rm -p 6379:6379 -e REDIS_ARGS=--save 60 1 redis:latest`.
-Keys are sorted, and the flags always precede the image name — everything after the image would
-be taken by `docker` as the container command. To set a variable for the `docker` client itself
-(`DOCKER_HOST` and friends), export it in the shell that starts `parallel`.
+builds `docker run --name db --rm -p 5432:5432 -v <config-dir>/data:/var/lib/postgresql/data --network app-net -e POSTGRES_PASSWORD=secret postgres:17 -c max_connections=200`.
+
+> **`cmd` is the `docker` subcommand, not the container's command.** `cmd: 'exec'` selects
+> `docker exec`, which reads exactly backwards from what you might expect. Whatever should run
+> *inside* the container belongs in `args`. The name cannot be fixed — `docker.*` is part of the
+> frozen `v1` contract.
+
+Flags always come before the image name and `args` always after it, because `docker` treats
+everything following the image as the container's command. In a volume, a host path starting
+with `./` or `../` is resolved against the configuration file, the same as `dir`; anything else
+is left alone, so `data:/var/lib` stays a named volume instead of turning into a directory.
 
 Example of disabling commands (works for both regular and docker forms):
 

@@ -22,6 +22,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   One consequence worth knowing: with `-keep-going` a failing chain no longer cuts short a
   long-running sibling, so a run that includes a dev server will not finish on its own.
+- **Docker mode understands `volumes`, `network` and `args`.** Until now it covered only the
+  image, ports, `pull` and `--rm`, so any non-trivial container sent you back to writing a raw
+  `cmd:` — the mode was a showcase rather than a shortcut. Relative host paths in a volume
+  (`./data:/var/lib`) are resolved against the configuration file, like `dir`; named volumes and
+  absolute paths are left alone, so `data:/var/lib` does not silently become a directory.
+
+  `args` is the container's own command and is placed strictly after the image name, because
+  that is how `docker` reads it. The existing `cmd` field is the `docker` **subcommand**
+  (`run`, `exec`) despite reading like the opposite; it could not be renamed, since `docker.*`
+  is part of the frozen `v1` contract, so the container command got a new field instead and the
+  trap is now spelled out in the README.
+
+  Docker commands also stop repeating their whole command line in front of every output line:
+  the arguments are assembled by the tool and, with volumes and a container command, grew longer
+  than the output itself. They now show just the command name, as the `run:` form already did.
+  An explicit `format.cmdName` still wins.
 - **`envFile` and `${VAR}` substitution.** Environment variables already live in a project's
   `.env`, and nobody is going to restate them in YAML — until now the only way to set
   `DATABASE_URL` was to copy it by hand next to the file that already had it. `envFile` accepts

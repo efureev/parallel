@@ -62,5 +62,8 @@ commands:
           tag: 'alpine'
           # pull: 'always'        # по умолчанию не указывается
         ports: [ '127.0.0.1:8080:80' ]
+        # volumes: [ './site:/usr/share/nginx/html' ]  # ./ и ../ разрешаются от конфигурации
+        # network: 'app-net'
+        # args: [ 'nginx-debug', '-g', 'daemon off;' ]  # команда КОНТЕЙНЕРА, после образа
         # removeAfterAll: false   # по умолчанию добавляется --rm
-        # cmd: 'exec'             # по умолчанию 'run'
+        # cmd: 'exec'             # подкоманда САМОГО docker, не команда контейнера

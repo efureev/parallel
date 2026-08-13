@@ -111,7 +111,7 @@ func (b *FlowBuilder) Build(data Data) (flow.Flow, error) {
 			}
 
 			if namedCmd.Spec.Docker != nil {
-				cmd, err = b.createDockerCommand(namedCmd.Name, namedCmd.Spec, env)
+				cmd, err = b.createDockerCommand(namedCmd.Name, namedCmd.Spec, env, lookup, resolve)
 			} else {
 				cmd, err = b.createRegularCommand(namedCmd.Name, namedCmd.Spec, env, lookup)
 			}
@@ -223,26 +223,70 @@ func restartOf(cmdRaw command) (flow.RestartPolicy, int, time.Duration, error) {
 	return policy, cmdRaw.RestartAttempts, cmdRaw.RestartDelay, nil
 }
 
-func (b *FlowBuilder) createDockerCommand(
-	cmdName string, cmdRaw command, env map[string]string,
-) (flow.Command, error) {
-	dockerCmd := cmdRaw.Docker.Cmd
+// resolveVolume разрешает хостовую часть тома относительно файла конфигурации.
+//
+// Трогаются только явно относительные пути — начинающиеся с ./ или ../. Всё
+// прочее оставляется как есть: «data:/var/lib» это имя тома, а не каталог,
+// и превратив его в путь, мы сломали бы именованные тома. Абсолютные пути,
+// включая windows-овские с двоеточием после буквы диска, тоже не затрагиваются.
+func resolveVolume(spec string, resolve func(string) string) string {
+	host, rest, found := strings.Cut(spec, ":")
+	if !found {
+		// Анонимный том: задан только путь внутри контейнера.
+		return spec
+	}
+
+	if !strings.HasPrefix(host, "./") && !strings.HasPrefix(host, "../") {
+		return spec
+	}
+
+	return resolve(host) + ":" + rest
+}
+
+// dockerArgs собирает аргументы вызова docker.
+//
+// Порядок здесь — не вкус, а требование самого docker: всё после имени образа
+// считается командой контейнера. Поэтому флаги идут строго до образа, а
+// docker.args — строго после.
+func dockerArgs(
+	cmdName string, spec *dockerCommand, env, lookup map[string]string, resolve func(string) string,
+) ([]string, error) {
+	dockerCmd := spec.Cmd
 	if dockerCmd == `` {
 		dockerCmd = dockerRunSubcommand
 	}
 
 	args := []string{dockerCmd, `--name`, cmdName}
 
-	if cmdRaw.Docker.RemoveAfterAll == nil {
+	if spec.RemoveAfterAll == nil {
 		args = append(args, `--rm`)
 	}
 
-	if cmdRaw.Docker.Image.Pull != `` {
-		args = append(args, `--pull`, cmdRaw.Docker.Image.Pull)
+	if spec.Image.Pull != `` {
+		args = append(args, `--pull`, spec.Image.Pull)
 	}
 
-	for _, port := range cmdRaw.Docker.Ports {
+	ports, err := expandAll(spec.Ports, lookup)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, port := range ports {
 		args = append(args, `-p`, port)
+	}
+
+	args, err = appendVolumes(args, spec.Volumes, lookup, resolve)
+	if err != nil {
+		return nil, err
+	}
+
+	network, err := expand(spec.Network, lookup)
+	if err != nil {
+		return nil, err
+	}
+
+	if network != `` {
+		args = append(args, `--network`, network)
 	}
 
 	// Переменные уходят контейнеру флагом -e, а не окружению процесса docker.
@@ -250,23 +294,83 @@ func (b *FlowBuilder) createDockerCommand(
 	// заполнение Env здесь означало бы, что заданное пользователем рядом с
 	// секцией docker не доходит никуда.
 	//
-	// Флаги обязаны стоять до имени образа: всё после него docker трактует как
-	// команду контейнера.
+	// Подстановка к ним уже применена в commandEnv: повторять её нельзя, иначе
+	// значение, содержащее литеральную ${...}, раскрылось бы дважды.
 	for _, pair := range envPairs(env) {
 		args = append(args, `-e`, pair)
 	}
 
-	imageTag := cmdRaw.Docker.Image.Tag
-	if imageTag == `` {
-		imageTag = `latest`
+	image, err := dockerImageRef(spec, lookup)
+	if err != nil {
+		return nil, err
 	}
 
-	imageName := cmdRaw.Docker.Image.Name + `:` + imageTag
-	args = append(args, imageName)
+	args = append(args, image)
+
+	// Команда контейнера — строго после образа.
+	containerArgs, err := expandAll(spec.Args, lookup)
+	if err != nil {
+		return nil, err
+	}
+
+	return append(args, containerArgs...), nil
+}
+
+// appendVolumes дописывает тома, разрешая относительные хостовые пути.
+func appendVolumes(
+	args, volumes []string, lookup map[string]string, resolve func(string) string,
+) ([]string, error) {
+	expanded, err := expandAll(volumes, lookup)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, volume := range expanded {
+		args = append(args, `-v`, resolveVolume(volume, resolve))
+	}
+
+	return args, nil
+}
+
+// dockerImageRef собирает ссылку на образ вида name:tag.
+func dockerImageRef(spec *dockerCommand, lookup map[string]string) (string, error) {
+	name, err := expand(spec.Image.Name, lookup)
+	if err != nil {
+		return "", err
+	}
+
+	tag, err := expand(spec.Image.Tag, lookup)
+	if err != nil {
+		return "", err
+	}
+
+	if tag == `` {
+		tag = `latest`
+	}
+
+	return name + `:` + tag, nil
+}
+
+func (b *FlowBuilder) createDockerCommand(
+	cmdName string, cmdRaw command, env, lookup map[string]string, resolve func(string) string,
+) (flow.Command, error) {
+	args, err := dockerArgs(cmdName, cmdRaw.Docker, env, lookup, resolve)
+	if err != nil {
+		return flow.Command{}, err
+	}
 
 	policy, attempts, delay, err := restartOf(cmdRaw)
 	if err != nil {
 		return flow.Command{}, err
+	}
+
+	// Аргументы docker-команды собраны нами целиком и в префиксе каждой строки
+	// вывода превращаются в шум: с томами и командой контейнера они длиннее
+	// самого вывода. Поэтому по умолчанию показываем только имя — как и
+	// у строковой формы run. Явный формат из конфигурации не трогаем.
+	format := cmdRaw.Format.CmdName
+	if format == "" {
+		format = cmdNameOnly
 	}
 
 	return flow.Command{
@@ -277,7 +381,7 @@ func (b *FlowBuilder) createDockerCommand(
 		Pipe:    true,
 		Disable: cmdRaw.Disable,
 		// Env намеренно пуст: переменные уже ушли в аргументы флагами -e.
-		Format:          flow.Format{CmdName: cmdRaw.Format.CmdName},
+		Format:          flow.Format{CmdName: format},
 		Timeout:         cmdRaw.Timeout,
 		Restart:         policy,
 		RestartAttempts: attempts,

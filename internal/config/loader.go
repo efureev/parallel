@@ -60,9 +60,18 @@ type dockerCommand struct {
 		Tag  string `yaml:"tag"`  // latest
 		Pull string `yaml:"pull"` // 'always',
 	} `yaml:"image"`
-	RemoveAfterAll *bool    `yaml:"removeAfterAll"` // true
-	Cmd            string   `yaml:"cmd"`            // run
-	Ports          []string `yaml:"ports"`
+	RemoveAfterAll *bool `yaml:"removeAfterAll"` // true
+	// Cmd — подкоманда САМОГО docker (run, exec), а не то, что выполняется
+	// внутри контейнера. Читается ровно наоборот, поэтому команда контейнера
+	// живёт в отдельном поле Args. Переименовать нельзя: docker.* входит
+	// в замороженный контракт v1.
+	Cmd     string   `yaml:"cmd"` // run
+	Ports   []string `yaml:"ports"`
+	Volumes []string `yaml:"volumes"`
+	Network string   `yaml:"network"`
+	// Args — команда контейнера: всё, что docker должен получить ПОСЛЕ имени
+	// образа.
+	Args []string `yaml:"args"`
 }
 
 type command struct {
