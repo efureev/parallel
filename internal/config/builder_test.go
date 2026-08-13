@@ -73,7 +73,7 @@ func TestFlowBuilder_BuildRegularAndDocker(t *testing.T) {
 				foundEcho = true
 			}
 
-			if c.Cmd == "docker" {
+			if c.Cmd == dockerBinary {
 				foundDocker = true
 				// Validate essential docker args using simple substring checks to reduce complexity.
 				argsStr := strings.Join(c.Args, " ")

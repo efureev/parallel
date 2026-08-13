@@ -15,8 +15,14 @@ func TestLoad_ResolvesDirAgainstConfigFile(t *testing.T) {
 	projectDir := t.TempDir()
 	configPath := filepath.Join(projectDir, "flow.yaml")
 
+	// В YAML путь пишется через прямые слэши: на Windows обратный слэш внутри
+	// кавычек читается неоднозначно. Сравнивать результат надо с этой же
+	// строкой, а не с projectDir, — иначе на Windows тест сверял бы C:/x с C:\\x
+	// и падал, хотя проверяется совсем другое: что абсолютный путь не тронули.
+	absDir := filepath.ToSlash(projectDir)
+
 	raw := "commands:\n  c:\n    rel:\n      cmd: [ 'echo', 'x' ]\n      dir: 'sub'\n" +
-		"    abs:\n      cmd: [ 'echo', 'x' ]\n      dir: '" + filepath.ToSlash(projectDir) + "'\n" +
+		"    abs:\n      cmd: [ 'echo', 'x' ]\n      dir: '" + absDir + "'\n" +
 		"    none:\n      cmd: [ 'echo', 'x' ]\n"
 
 	if err := os.WriteFile(configPath, []byte(raw), 0o600); err != nil {
@@ -43,8 +49,8 @@ func TestLoad_ResolvesDirAgainstConfigFile(t *testing.T) {
 		t.Errorf("относительный dir = %q, want %q", dirs["rel"], want)
 	}
 
-	if dirs["abs"] != projectDir {
-		t.Errorf("абсолютный dir изменён: %q, want %q", dirs["abs"], projectDir)
+	if dirs["abs"] != absDir {
+		t.Errorf("абсолютный dir изменён: %q, want %q", dirs["abs"], absDir)
 	}
 
 	if dirs["none"] != "" {

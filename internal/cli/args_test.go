@@ -40,7 +40,7 @@ func TestParseFlags_ChainSelection(t *testing.T) {
 // смысл: flag.Parse складывает позиционные аргументы и хвост после `--`
 // в один срез, поэтому разделитель разбирается до него.
 func TestParseFlags_AdHocAfterDoubleDash(t *testing.T) {
-	cfg, err := parseArgs(t, "--", "go run ./cmd/api", "yarn dev")
+	cfg, err := parseArgs(t, doubleDash, "go run ./cmd/api", "yarn dev")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestParseFlags_AdHocAfterDoubleDash(t *testing.T) {
 // TestParseFlags_FlagsBeforeDoubleDash: флаги слева от разделителя обязаны
 // разбираться как флаги, а не уезжать в команды.
 func TestParseFlags_FlagsBeforeDoubleDash(t *testing.T) {
-	cfg, err := parseArgs(t, "-log-level", "debug", "--", "echo hi")
+	cfg, err := parseArgs(t, "-log-level", "debug", doubleDash, "echo hi")
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -71,8 +71,8 @@ func TestParseFlags_FlagsBeforeDoubleDash(t *testing.T) {
 // ad-hoc её нет — молча проигнорировать одно из двух нельзя.
 func TestParseFlags_AdHocWithSelection(t *testing.T) {
 	for _, args := range [][]string{
-		{"api", "--", "echo hi"},
-		{"-except", "worker", "--", "echo hi"},
+		{"api", doubleDash, "echo hi"},
+		{"-except", "worker", doubleDash, "echo hi"},
 	} {
 		if _, err := parseArgs(t, args...); !errors.Is(err, ErrAdHocWithSelection) {
 			t.Errorf("%v: ожидалась ErrAdHocWithSelection, получено %v", args, err)

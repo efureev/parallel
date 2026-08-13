@@ -15,6 +15,9 @@ import (
 // defaultLogLevel — уровень журналирования, если -log-level не задан.
 const defaultLogLevel = "info"
 
+// doubleDash отделяет команды ad-hoc от флагов и имён цепочек.
+const doubleDash = "--"
+
 var (
 	// ErrEmptyConfigPath — флаг -f получил пустое значение.
 	ErrEmptyConfigPath = errors.New("config file path cannot be empty")
@@ -227,7 +230,7 @@ func (c *Config) validate() error {
 // и другая ошибка.
 func splitAtDoubleDash(args []string) (head, tail []string) {
 	for i, a := range args {
-		if a == "--" {
+		if a == doubleDash {
 			return args[:i], args[i+1:]
 		}
 	}

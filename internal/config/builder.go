@@ -11,6 +11,12 @@ import (
 // cmdNameOnly — шаблон отображаемого имени без аргументов.
 const cmdNameOnly = "%CMD_NAME%"
 
+// dockerBinary — исполняемый файл, которым запускается docker-режим.
+//
+// Отдельно от одноимённого ключа схемы в loader.go: совпадение строк случайно,
+// одна из них — имя поля YAML, другая — программа, которую надо найти в PATH.
+const dockerBinary = "docker"
+
 // dirResolver разрешает относительные рабочие каталоги команд от каталога
 // конфигурации.
 //
@@ -145,7 +151,7 @@ func (b *FlowBuilder) createDockerCommand(cmdName string, cmdRaw command) flow.C
 
 	return flow.Command{
 		Name:    cmdName,
-		Cmd:     `docker`,
+		Cmd:     dockerBinary,
 		Args:    args,
 		Dir:     cmdRaw.Dir,
 		Pipe:    true,

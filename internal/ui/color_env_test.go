@@ -30,18 +30,16 @@ func TestColorEnabled_Precedence(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			clearColorEnv(t)
+
 			// NO_COLOR учитывается по факту присутствия, поэтому пустая строка
 			// в наборе выше означает «переменная задана пустым значением».
 			if tt.name == "NO_COLOR сильнее FORCE_COLOR" {
 				t.Setenv("NO_COLOR", tt.noColorEnv)
-			} else {
-				os.Unsetenv("NO_COLOR")
 			}
 
 			if tt.forceEnv != "" {
 				t.Setenv("FORCE_COLOR", tt.forceEnv)
-			} else {
-				os.Unsetenv("FORCE_COLOR")
 			}
 
 			if got := colorEnabled(&bytes.Buffer{}, tt.forceNoFlag); got != tt.want {
@@ -51,9 +49,31 @@ func TestColorEnabled_Precedence(t *testing.T) {
 	}
 }
 
+// clearColorEnv снимает переменные раскраски на время теста и возвращает их
+// прежние значения после.
+//
+// os.Unsetenv без восстановления протекал бы в соседние тесты пакета, а с
+// -shuffle=on это давало бы отказ, зависящий от порядка запуска.
+func clearColorEnv(t *testing.T) {
+	t.Helper()
+
+	for _, key := range []string{"NO_COLOR", "FORCE_COLOR"} {
+		if old, ok := os.LookupEnv(key); ok {
+			t.Cleanup(func() { _ = os.Setenv(key, old) })
+		} else {
+			t.Cleanup(func() { _ = os.Unsetenv(key) })
+		}
+
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+	}
+}
+
 // TestNewOutput_NoColorLeavesNoEscapes — сквозная проверка: договорённость
 // должна доходить до самих строк, а не оставаться в решении.
 func TestNewOutput_NoColorLeavesNoEscapes(t *testing.T) {
+	clearColorEnv(t)
 	t.Setenv("FORCE_COLOR", "1")
 
 	var buf bytes.Buffer
