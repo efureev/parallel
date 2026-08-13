@@ -5,6 +5,36 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - unreleased
+
+### Added
+
+- **`-keep-going` and the `failFast` configuration key.** The failure of one chain used to stop
+  every other one, with no way to turn that off. For a dev stack it is the right default — once
+  the API is gone there is little point in keeping the frontend up — but in CI it is actively
+  harmful: running the linter, the tests and the build as three chains, you want every failure at
+  once rather than the first one and then two more runs. An explicit flag beats the file, so
+  `-keep-going=false` forces the default back for a single run.
+
+  The switch only affects chains relative to each other. Inside a chain nothing changes: a failed
+  non-`pipe` command still skips the rest of *its* chain, because commands there are usually
+  dependent and continuing past a failed `migrate` would work against a broken state.
+
+  One consequence worth knowing: with `-keep-going` a failing chain no longer cuts short a
+  long-running sibling, so a run that includes a dev server will not finish on its own.
+- **A warning for top-level keys that look like a typo.** `failFats: false` used to do nothing
+  and say nothing. Unknown top-level keys stay accepted — rejecting them would break
+  configurations that keep YAML anchors there, and the schema has been frozen since `v1.0.0` — so
+  only keys close to a known name are reported, and `x-common` or `_defaults` remain silent.
+
+### Fixed
+
+- **The exit code was not reproducible when several chains failed at once.** In fail-fast mode a
+  sibling's failure is masked by the cancellation that its neighbour triggered, so the same
+  configuration returned different codes from run to run. Under `-keep-going` no failure is
+  masked, and the documented rule — the code of the first failure in configuration order — now
+  holds on every run.
+
 ## [1.1.0] - 2026-08-13
 
 ### Added
@@ -258,3 +288,4 @@ without a `/vN` suffix.
 [0.10.0]: https://github.com/efureev/parallel/releases/tag/0.10.0
 [1.0.0]: https://github.com/efureev/parallel/releases/tag/v1.0.0
 [1.1.0]: https://github.com/efureev/parallel/releases/tag/v1.1.0
+[1.2.0]: https://github.com/efureev/parallel/releases/tag/v1.2.0

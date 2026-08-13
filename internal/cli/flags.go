@@ -56,6 +56,12 @@ type Config struct {
 	DryRun bool
 	// NoColor принудительно отключает раскраску.
 	NoColor bool
+
+	// KeepGoing — отказ цепочки не останавливает соседние.
+	KeepGoing bool
+	// KeepGoingSet различает «флаг не передавали» и «передали -keep-going=false».
+	// Без этого нельзя дать флагу перевесить ключ failFast из конфигурации.
+	KeepGoingSet bool
 }
 
 // Option позволяет донастроить разбор флагов.
@@ -82,6 +88,8 @@ Flags:
   -list              list the chains defined in the configuration and exit
   -dry-run           show what would run and exit without starting anything
   -no-color          disable colored output (NO_COLOR is respected too)
+  -keep-going        do not stop the other chains when one of them fails
+                     (overrides failFast from the configuration file)
   -log-level <level> debug, info, warn or error (default "info")
   -v, --version      show version information and exit
   -h, --help         show this help and exit
@@ -96,6 +104,7 @@ Examples:
   parallel -except worker               # run everything but this one
   parallel -list                        # what does this configuration define?
   parallel -dry-run api                 # what exactly would 'parallel api' run?
+  parallel -keep-going                  # report every failure, not just the first
   parallel -- 'go run ./cmd/api' 'yarn dev'   # no configuration file at all
 
 Documentation: https://github.com/efureev/parallel
@@ -110,6 +119,7 @@ func bindFlags(fs *flag.FlagSet, cfg *Config, logLevel, except *string) {
 	fs.BoolVar(&cfg.List, "list", false, "List chains and exit")
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "Show what would run and exit")
 	fs.BoolVar(&cfg.NoColor, "no-color", false, "Disable colored output")
+	fs.BoolVar(&cfg.KeepGoing, "keep-going", false, "Do not stop other chains when one fails")
 	fs.StringVar(logLevel, "log-level", defaultLogLevel, "Log level: debug, info, warn, error")
 	// Support both -v and -version flags.
 	fs.BoolVar(&cfg.VersionRequested, "v", false, "Show version information and exit")
@@ -192,6 +202,7 @@ func ParseFlags(opts ...Option) (*Config, error) {
 	cfg.LogLevel = level
 	cfg.Chains = fs.Args()
 	cfg.Except = splitList(except)
+	cfg.KeepGoingSet = explicitlySet(fs, "keep-going")
 
 	if err := cfg.validate(); err != nil {
 		return nil, err

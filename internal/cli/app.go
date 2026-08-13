@@ -53,37 +53,77 @@ func resolveConfigPath(configPath string, logger ui.Logger) (string, error) {
 	return found, nil
 }
 
-// loadFlow собирает Flow: либо из команд, переданных после `--`, либо из файла
+// runPlan — то, что утилита собирается выполнить: сами цепочки и политика
+// запуска.
+//
+// Политика едет отдельно от Flow намеренно: «останавливать ли соседей при
+// отказе» — свойство запуска, а не конфигурации команд, и домену о нём знать
+// незачем.
+type runPlan struct {
+	flow      flow.Flow
+	keepGoing bool
+}
+
+// loadFlow собирает план: либо из команд, переданных после `--`, либо из файла
 // конфигурации.
-func loadFlow(flags *Config, logger ui.Logger) (flow.Flow, error) {
+func loadFlow(flags *Config, logger ui.Logger) (runPlan, error) {
 	if len(flags.AdHoc) > 0 {
-		return config.AdHoc(flags.AdHoc)
+		adHoc, err := config.AdHoc(flags.AdHoc)
+
+		// Файла нет, значит и ключа failFast быть не может — решает только флаг.
+		return runPlan{flow: adHoc, keepGoing: resolveKeepGoing(flags, nil)}, err
 	}
 
 	resolved, err := resolveConfigPath(flags.ConfigFilePath, logger)
 	if err != nil {
 		logger.Error(err, "Failed to locate configuration file")
 
-		return flow.Flow{}, err
+		return runPlan{}, err
 	}
 
 	configData, err := config.NewFileLoader(config.YamlFileMarshaller{}).Load(resolved)
 	if err != nil {
 		logger.Error(err, "Failed to load configuration file")
 
-		return flow.Flow{}, err
+		return runPlan{}, err
 	}
 
-	return config.NewFlowBuilder().Build(configData)
+	for _, hint := range configData.TopLevelHints {
+		logger.Warn(hint)
+	}
+
+	built, err := config.NewFlowBuilder().Build(configData)
+
+	return runPlan{flow: built, keepGoing: resolveKeepGoing(flags, configData.FailFast)}, err
 }
 
-func initializeApp(flags *Config, logger ui.Logger) (*flow.Flow, error) {
-	result, err := loadFlow(flags, logger)
+// resolveKeepGoing сводит флаг командной строки и ключ конфигурации в одно
+// решение.
+//
+// Явный флаг сильнее файла: он относится к конкретному запуску, а файл — к
+// проекту. Отсюда же и `-keep-going=false` как способ вернуть fail-fast, когда
+// в конфигурации стоит `failFast: false`.
+func resolveKeepGoing(flags *Config, failFast *bool) bool {
+	if flags.KeepGoingSet {
+		return flags.KeepGoing
+	}
+
+	if failFast != nil {
+		return !*failFast
+	}
+
+	return false
+}
+
+func initializeApp(flags *Config, logger ui.Logger) (*runPlan, error) {
+	plan, err := loadFlow(flags, logger)
 	if err != nil {
 		logger.Error(err, "Invalid configuration")
 
 		return nil, err
 	}
+
+	result := plan.flow
 
 	// Отбор идёт до валидации: она обязана относиться к тому, что реально
 	// запустится, иначе исключённая цепочка мешала бы запуску остальных.
@@ -110,7 +150,9 @@ func initializeApp(flags *Config, logger ui.Logger) (*flow.Flow, error) {
 
 	logger.Debug("Config Parsed")
 
-	return &result, nil
+	plan.flow = result
+
+	return &plan, nil
 }
 
 // preview обслуживает режимы, которые ничего не запускают, и сообщает, надо ли
@@ -145,18 +187,23 @@ func runApplication(
 	logger ui.Logger,
 	formatter *ui.OutputFormatter,
 ) error {
-	result, err := initializeApp(flags, logger)
+	plan, err := initializeApp(flags, logger)
 	if err != nil {
 		return err
 	}
 
 	logger.Debug("Config was loaded...")
 
-	if preview(flags, result, logger) {
+	if preview(flags, &plan.flow, logger) {
 		return nil
 	}
 
-	manager := runner.NewManager(logger, formatter)
+	var managerOpts []runner.Option
+	if plan.keepGoing {
+		managerOpts = append(managerOpts, runner.WithKeepGoing())
+	}
+
+	manager := runner.NewManager(logger, formatter, managerOpts...)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -182,7 +229,7 @@ func runApplication(
 	done := make(chan error, 1)
 
 	go func() {
-		done <- manager.ExecuteParallel(ctx, result.Chains)
+		done <- manager.ExecuteParallel(ctx, plan.flow.Chains)
 	}()
 
 	waitErr := waitForCompletion(ctx, done, logger)

@@ -54,6 +54,10 @@ type Manager struct {
 	output   *ui.OutputFormatter
 	chains   *chainExecutor
 	timeouts Timeouts
+
+	// keepGoing переносится в chainExecutor при сборке: опции применяются
+	// до его создания, поэтому передать значение напрямую нельзя.
+	keepGoing bool
 }
 
 // Option настраивает менеджер при создании.
@@ -61,6 +65,15 @@ type Option func(*Manager)
 
 // WithTimeouts задаёт тайминги завершения процессов.
 // Нужен тестам, чтобы не ждать секундами то, что проверяется миллисекундами.
+// WithKeepGoing отключает остановку соседних цепочек при отказе одной из них.
+//
+// Влияет только на цепочки между собой: внутри цепочки упавшая не-pipe команда
+// по-прежнему обрывает остаток — команды в ней обычно зависимы (migrate → serve),
+// и продолжать после отказа значило бы работать с заведомо неверным состоянием.
+func WithKeepGoing() Option {
+	return func(m *Manager) { m.keepGoing = true }
+}
+
 func WithTimeouts(t Timeouts) Option {
 	return func(m *Manager) { m.timeouts = t.normalize() }
 }
@@ -80,7 +93,12 @@ func NewManager(logger ui.Logger, formatter *ui.OutputFormatter, opts ...Option)
 		opt(m)
 	}
 
-	m.chains = newChainExecutor(logger, m, m.stopAllCommands)
+	var chainOpts []chainOption
+	if m.keepGoing {
+		chainOpts = append(chainOpts, withKeepGoing())
+	}
+
+	m.chains = newChainExecutor(logger, m, m.stopAllCommands, chainOpts...)
 
 	return m
 }

@@ -63,6 +63,7 @@ Flags are supported currently:
 - `-except <names>` — comma-separated chains to skip
 - `-list` — list the chains the configuration defines, then exit
 - `-dry-run` — show exactly what would run, then exit without starting anything
+- `-keep-going` — do not stop the other chains when one of them fails
 - `-no-color` — disable colored output
 - `-log-level` — `debug`, `info` (default), `warn` or `error`
 - `-v`, `--version` — version info
@@ -75,6 +76,7 @@ parallel api ui                              # run only these chains
 parallel -except worker                      # everything but this one
 parallel -list                               # what does this configuration define?
 parallel -dry-run api                        # what exactly would `parallel api` run?
+parallel -keep-going                          # report every failure, not just the first
 parallel -- 'go run ./cmd/api' 'yarn dev'    # no configuration file at all
 ```
 
@@ -95,6 +97,33 @@ Parallel is CI/script friendly and reports a meaningful exit status:
   the first one in configuration order wins.
 
 This lets you safely use `parallel` in scripts and pipelines (e.g., `parallel -f flow.yaml && next-step`).
+
+### When one chain fails
+
+By default the failure of a chain stops the others: with a dev stack there is little point in
+keeping the frontend up once the API is gone. In CI the opposite is usually wanted — running the
+linter, the tests and the build as three chains, you want to see every failure at once rather
+than the first one and then two more runs. That is `-keep-going`, or `failFast: false` in the
+configuration:
+
+```yaml
+failFast: false     # top-level key, next to `commands`
+commands:
+  lint: ...
+  test: ...
+```
+
+An explicit flag beats the file, so `-keep-going=false` forces the default behaviour back for a
+single run.
+
+`-keep-going` only affects chains relative to each other. Inside a chain nothing changes: a
+failed non-`pipe` command still skips the rest of *its* chain, because commands there are
+usually dependent — running `serve` after `migrate` failed would just work against a broken
+state.
+
+> One consequence worth knowing: with `-keep-going` a failing chain no longer cuts short a
+> long-running sibling. A run that includes a dev server will therefore not finish on its own —
+> previously the cancellation killed it.
 
 ### Summary
 
@@ -368,13 +397,15 @@ commands:
 
 Starting with `v1.0.0` the following is frozen and will not change without a `v2`:
 
-- **CLI flags** — `-f <path>`, `-v`, `--version`, `-list`, `-dry-run`, `-except`, `-no-color`;
+- **CLI flags** — `-f <path>`, `-v`, `--version`, `-list`, `-dry-run`, `-except`, `-no-color`,
+  `-keep-going`;
   positional arguments select chains and `--` starts config-less mode; the default config name
   `.parallelrc.yaml`
   (`.parallelrc.yml` is also accepted), looked up in the current directory and its parents.
 - **Exit codes** — `0` on success; `1` on a startup or configuration error; a failing command's
   own exit status is passed through.
-- **Configuration schema** — the top-level `commands` key and the command fields `cmd`, `run`, `dir`,
+- **Configuration schema** — the top-level keys `commands` and `failFast`, and the command
+  fields `cmd`, `run`, `dir`,
   `pipe`, `disable`, `env`, `format.cmdName`, `docker.*`, plus the `%CMD_NAME%` / `%CMD_ARGS%`
   placeholders.
 - **Execution semantics** — chains run in parallel; inside a chain non-`pipe` commands run

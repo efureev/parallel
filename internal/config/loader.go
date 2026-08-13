@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/goccy/go-yaml"
@@ -16,8 +17,21 @@ import (
 	"github.com/efureev/parallel/internal/flow"
 )
 
-// commandsKey — верхнеуровневый ключ конфигурации.
-const commandsKey = "commands"
+// Верхнеуровневые ключи конфигурации.
+const (
+	commandsKey = "commands"
+	failFastKey = "failFast"
+)
+
+// knownTopLevelFields — ключи, которые утилита понимает на верхнем уровне.
+//
+// Список нужен только для подсказки при опечатке. Неизвестный ключ здесь не
+// ошибка, в отличие от полей команды: верхний уровень исторически принимал
+// что угодно, и запрет сломал бы конфигурации с YAML-якорями (`_defaults: &d`),
+// а схема заморожена с v1.0.0.
+//
+//nolint:gochecknoglobals // неизменяемый список, константой объявить нельзя
+var knownTopLevelFields = []string{commandsKey, failFastKey}
 
 // knownCommandFields — имена полей команды в том виде, в каком их пишут в YAML.
 // Список нужен только для подсказки при опечатке; источник истины — yaml-теги
@@ -76,6 +90,17 @@ type ChainConfig struct {
 // Порядок цепочек и команд внутри них в точности повторяет YAML-файл.
 type Data struct {
 	Chains []ChainConfig
+
+	// FailFast: nil означает, что ключа в файле не было и решение за вызывающим.
+	// Указатель, а не bool, именно ради этого различия: false в файле и молчание
+	// файла — разные вещи, потому что флаг командной строки сильнее только
+	// второго.
+	FailFast *bool
+
+	// TopLevelHints — предупреждения о ключах верхнего уровня, похожих на
+	// известные. Возвращаются данными, а не пишутся в лог: слой конфигурации
+	// логгера не имеет, и заводить его ради двух строк незачем.
+	TopLevelHints []string
 
 	// BaseDir — каталог, относительно которого разрешаются относительные пути
 	// в поле dir. Это каталог самого файла конфигурации, а не текущий каталог
@@ -169,6 +194,15 @@ func parseData(body ast.Node) (Data, error) {
 		return cfg, nil
 	}
 
+	cfg.TopLevelHints = topLevelHints(root)
+
+	failFast, err := parseFailFast(root)
+	if err != nil {
+		return Data{}, err
+	}
+
+	cfg.FailFast = failFast
+
 	commandsNode := lookup(root, commandsKey)
 	if commandsNode == nil {
 		return cfg, nil
@@ -197,6 +231,44 @@ func parseData(body ast.Node) (Data, error) {
 	}
 
 	return cfg, nil
+}
+
+// parseFailFast читает верхнеуровневый ключ failFast.
+func parseFailFast(root []*ast.MappingValueNode) (*bool, error) {
+	node := lookup(root, failFastKey)
+	if node == nil {
+		return nil, nil //nolint:nilnil // отсутствие ключа — не ошибка и не значение
+	}
+
+	var value bool
+	if err := yaml.NodeToValue(node, &value, yaml.Strict()); err != nil {
+		return nil, fmt.Errorf("%w %q: %w", ErrConfigDecode, failFastKey, err)
+	}
+
+	return &value, nil
+}
+
+// topLevelHints ищет ключи верхнего уровня, похожие на известные.
+//
+// Опечатка `failFats` иначе не сделала бы ничего и об этом не сказала — ровно
+// тот класс ошибки, ради которого поля команды разбираются строго. Строгость
+// здесь недоступна (см. knownTopLevelFields), поэтому остаётся предупреждение,
+// и только для похожих: `x-common` и `_defaults` должны молчать.
+func topLevelHints(root []*ast.MappingValueNode) []string {
+	var hints []string
+
+	for _, entry := range root {
+		key := entry.Key.GetToken().Value
+		if slices.Contains(knownTopLevelFields, key) {
+			continue
+		}
+
+		if best := closestField(key, knownTopLevelFields); best != "" {
+			hints = append(hints, fmt.Sprintf("unknown top-level key %q, possibly meant %q", key, best))
+		}
+	}
+
+	return hints
 }
 
 // mappingValues приводит узел к списку пар «ключ-значение» в исходном порядке.
@@ -256,7 +328,7 @@ func unknownFieldHint(err error) string {
 		return ""
 	}
 
-	if best := closestField(m[1]); best != "" {
+	if best := closestField(m[1], knownCommandFields); best != "" {
 		return fmt.Sprintf("возможно, имелось в виду %q", best)
 	}
 
@@ -273,7 +345,7 @@ func unknownFieldHint(err error) string {
 //
 // Порог расстояния намеренно низкий: при трёх «xyz» оказывается одинаково
 // близко к «env», «dir» и «cmd», и подсказка становится вредной.
-func closestField(field string) string {
+func closestField(field string, known []string) string {
 	const (
 		maxDistance  = 2
 		minPrefixLen = 3
@@ -282,13 +354,15 @@ func closestField(field string) string {
 	lower := strings.ToLower(field)
 	best, bestDist := "", maxDistance+1
 
-	for _, known := range knownCommandFields {
-		if len(known) >= minPrefixLen && (strings.HasPrefix(lower, known) || strings.HasPrefix(known, lower)) {
-			return known
+	for _, name := range known {
+		lowerName := strings.ToLower(name)
+
+		if len(name) >= minPrefixLen && (strings.HasPrefix(lower, lowerName) || strings.HasPrefix(lowerName, lower)) {
+			return name
 		}
 
-		if d := editDistance(lower, known); d < bestDist {
-			best, bestDist = known, d
+		if d := editDistance(lower, lowerName); d < bestDist {
+			best, bestDist = name, d
 		}
 	}
 

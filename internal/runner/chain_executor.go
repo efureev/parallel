@@ -27,18 +27,37 @@ type chainExecutor struct {
 	runner  CommandRunner
 	stopAll stopAllFunc
 
+	// keepGoing отключает остановку соседних цепочек при отказе одной из них.
+	keepGoing bool
+
 	// results заполняется в конце ExecuteParallel и читается уже после её
 	// возврата, поэтому синхронизации не требует: запись всех горутин
 	// упорядочена относительно чтения вызовом group.Wait.
 	results []ChainResult
 }
 
-func newChainExecutor(lgr ui.Logger, runner CommandRunner, stopAll stopAllFunc) *chainExecutor {
-	return &chainExecutor{
+// chainOption донастраивает исполнитель цепочек.
+type chainOption func(*chainExecutor)
+
+// withKeepGoing включает режим, в котором отказ цепочки не останавливает соседей.
+func withKeepGoing() chainOption {
+	return func(c *chainExecutor) { c.keepGoing = true }
+}
+
+func newChainExecutor(
+	lgr ui.Logger, runner CommandRunner, stopAll stopAllFunc, opts ...chainOption,
+) *chainExecutor {
+	c := &chainExecutor{
 		lgr:     lgr,
 		runner:  runner,
 		stopAll: stopAll,
 	}
+
+	for _, opt := range opts {
+		opt(c)
+	}
+
+	return c
 }
 
 // ExecuteParallel выполняет цепочки параллельно, а команды внутри одной цепочки —
@@ -47,9 +66,15 @@ func newChainExecutor(lgr ui.Logger, runner CommandRunner, stopAll stopAllFunc) 
 // Оркестрация построена на errgroup: раньше здесь были собственные WaitGroup,
 // канал ошибок и горутина-монитор, причём монитор ждал отмены РОДИТЕЛЬСКОГО
 // контекста и жил до конца процесса, если тот не отменялся никогда.
-// errgroup.WithContext закрывает и оркестрацию, и время жизни наблюдателя.
+//
+// Отмена соседей при первом отказе — это ровно то, что даёт errgroup.WithContext,
+// и ровно то, что отключает keepGoing. Поэтому в режиме keep-going берётся голая
+// группа: она так же дожидается всех горутин, но контекст цепочек не отменяет.
 func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.CommandChain) error {
-	group, groupCtx := errgroup.WithContext(ctx)
+	group, groupCtx := &errgroup.Group{}, ctx
+	if !c.keepGoing {
+		group, groupCtx = errgroup.WithContext(ctx)
+	}
 
 	// Наблюдатель за отменой снаружи: живёт ровно столько же, сколько группа,
 	// потому что ждёт groupCtx, а тот закрывается при выходе из Wait.
