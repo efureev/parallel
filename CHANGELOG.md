@@ -22,6 +22,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   One consequence worth knowing: with `-keep-going` a failing chain no longer cuts short a
   long-running sibling, so a run that includes a dev server will not finish on its own.
+- **`envFile` and `${VAR}` substitution.** Environment variables already live in a project's
+  `.env`, and nobody is going to restate them in YAML — until now the only way to set
+  `DATABASE_URL` was to copy it by hand next to the file that already had it. `envFile` accepts
+  one path or a list, works both at the top level (for every command) and on a single command,
+  and resolves paths against the configuration file the way `dir` does. A missing file is an
+  error rather than silence: a skipped `envFile` would start the run with half the settings gone.
+
+  Precedence runs from the process environment through the top-level files and the command's own
+  files to `env`, which wins. Values can reference variables with `${VAR}` or `${VAR:-default}`,
+  expanded in `env` values, in `dir` and in the elements of `cmd`.
+
+  **The body of `run:` is deliberately left alone** — it goes to the shell, which expands `$VAR`
+  itself, and a second expansion would either double up or disagree with what a shell is expected
+  to do. For the same reason a bare `$VAR` is never expanded anywhere: command arguments contain
+  lone dollars of their own, as in `awk '{print $1}'`. Only the `${...}` form is substituted, and
+  `$${` writes a literal one. An undefined variable with no default is an error naming the
+  variable rather than an empty string, because an empty string quietly breaks paths and
+  addresses.
+- **A restart policy per command: `restart`, `restartAttempts`, `restartDelay`.** A dev server
+  that died on a compile error used to take the whole run down with it — the chain broke and, by
+  default, its siblings were cancelled too, so a typo cost a full manual restart. This is the one
+  reason people still keep `nodemon` next to this tool.
+
+  `on-failure` restarts after any failure, including a command stopped by its own `timeout`;
+  `always` restarts after a successful exit as well, which is the whole difference between them.
+  Attempts are unlimited unless `restartAttempts` says otherwise, because the main case is a dev
+  server that should come back up for as long as you keep fixing it. What protects against a
+  busy loop is not a counter but the delay, which doubles after every restart up to 30 seconds.
+
+  A command being restarted has not failed yet, so sibling chains keep running while the attempts
+  last. Cancellation is checked before the policy: after Ctrl+C nothing is restarted, otherwise a
+  command would come back up faster than it could be stopped. When the attempts run out the chain
+  fails and the exit code of the last failure is still passed through — the "gave up after N
+  attempts" note wraps the original error rather than replacing it.
 - **A `timeout` per command and a global `-timeout` flag.** A hung command used to hold the whole
   run until Ctrl+C, which in CI is the worst outcome: instead of a report you get a job killed by
   the overall limit, with nothing in the log to say which command stalled. `timeout: 30s` on a
@@ -37,6 +71,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   A timed-out run exits with `124`, following the convention of `timeout(1)`: a stopped process
   has no exit status of its own, so one has to be chosen. In the summary such a chain gets its
   own `timed out` status rather than a plain `failed`.
+- **Better field suggestions for typos in long names.** `restartAttemps` used to be answered with
+  "possibly meant restart", because a shared prefix outranked a closer match. Edit distance is
+  now tried first and the prefix rule only steps in when nothing is close — it exists for endings
+  such as `pipeline` against `pipe`, which are four edits apart.
 - **A warning for top-level keys that look like a typo.** `failFats: false` used to do nothing
   and say nothing. Unknown top-level keys stay accepted — rejecting them would break
   configurations that keep YAML anchors there, and the schema has been frozen since `v1.0.0` — so

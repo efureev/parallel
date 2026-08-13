@@ -142,6 +142,13 @@ Summary:
   ui      stopped  0.3s
 ```
 
+A command being restarted has not failed yet, so with the default fail-fast the sibling chains
+keep running while the attempts last.
+
+> **`restart: always` without a limit means the run never ends by itself.** For a dev stack that
+> is exactly right — the server comes back up and you keep working until Ctrl+C. In CI it is a
+> trap: set `restartAttempts` there.
+
 `stopped` means the chain did not fail on its own — it was cut short, either by a sibling chain
 failing or by Ctrl+C. `timed out` means a command exceeded its limit and was stopped.
 
@@ -217,12 +224,27 @@ commands: # list of parallel command chains
   but means nothing without a unit. The command is stopped the same way Ctrl+C stops it — signal
   first, kill only if it does not exit — so whatever it printed before being stopped is still
   shown. Overrides `-timeout`; without either there is no limit.
+- `restart: never | on-failure | always` — restart the command after it exits. `never` (the
+  default) runs it once. `on-failure` restarts after any failure, including a command stopped by
+  its own `timeout`. `always` restarts after a successful exit too — that is the whole difference
+  between the two.
+- `restartAttempts: 5` — how many times the command may be started in total. `0` or unset means
+  no limit. Once the attempts run out the chain fails, and the exit code of the last failure is
+  still passed through.
+- `restartDelay: 1s` — how long to wait before the first restart; it doubles after each one, up
+  to 30 seconds. The growing delay is what keeps `always` on an instantly-failing command from
+  spinning the CPU.
 - `disable: true` — disable a command without removing it from config. Disabled commands are shown in the flow preview
   and are skipped during execution. Default: `false`.
 - `env: { KEY: value }` — environment variables for this command. They are **added to** the environment `parallel`
   itself runs with, not a replacement for it, so there is no need to restate `PATH`. On a key collision the value from
   the config wins. For `docker` commands the variables are passed to the **container** — see
   [Docker mode](#docker-mode).
+- `envFile: .env` — load environment variables from a file, or several:
+  `envFile: [ .env, .env.local ]`. Paths are resolved against the configuration file, like `dir`.
+  A missing file is an error rather than silence — a skipped `envFile` would start the run with
+  half the settings gone. The same key also works at the top level, next to `commands`, where it
+  applies to every command.
 - `format.cmdName` — display name template. Supports placeholders:
     - `%CMD_NAME%` — command name (either `Name` or `Cmd`)
     - `%CMD_ARGS%` — arguments joined by space
@@ -237,6 +259,51 @@ commands:
         APP_ENV: development
         PORT: '8080'
 ```
+
+### Environment variables
+
+Four sources, from weakest to strongest:
+
+| Source | Notes |
+|---|---|
+| the environment `parallel` itself runs with | inherited, never restated |
+| top-level `envFile` | applies to every command |
+| the command's own `envFile` | layered on top |
+| the command's `env` | wins on a collision |
+
+Values can reference other variables with `${VAR}` or `${VAR:-default}`. Substitution happens in
+`env` values, in `dir` and in the elements of `cmd`:
+
+```yaml
+envFile: .env
+commands:
+  api:
+    serve:
+      dir: '${PROJECT_ROOT}/api'
+      cmd: [ 'go', 'run', '${TARGET:-./cmd/api}' ]
+      env:
+        URL: 'http://localhost:${PORT}'
+```
+
+Three rules worth knowing:
+
+- **`run:` is left alone on purpose.** Its body goes to the shell, which expands `$VAR` itself;
+  a second expansion would either double up or disagree with what you expect from a shell. Write
+  `run: 'echo $PORT'` and the shell resolves it.
+- **A bare `$VAR` is never expanded** — only the `${...}` form. Command arguments contain lone
+  dollars of their own (`awk '{print $1}'`), and eating them silently is worse than asking for
+  braces. To write a literal `${`, use `$${`.
+- **An undefined variable with no default is an error** naming the variable, not an empty string:
+  an empty string quietly breaks paths and addresses, and you find out from the behaviour of the
+  command rather than from the message.
+
+A `.env` file is read as: full-line `#` comments and blank lines are skipped, an optional
+`export ` prefix is dropped, the line is split at the **first** `=`, and a value wrapped in
+matching quotes is unquoted as-is (no escape processing). In an unquoted value everything from
+` #` onwards is a comment — quote the value if it must contain one.
+
+> In Docker mode `env` becomes `-e KEY=VALUE`, so a top-level `envFile` reaches your containers
+> too. That is usually what you want, but it does mean every variable in the file is passed.
 
 ### Docker mode
 
@@ -414,8 +481,8 @@ Starting with `v1.0.0` the following is frozen and will not change without a `v2
   (`.parallelrc.yml` is also accepted), looked up in the current directory and its parents.
 - **Exit codes** — `0` on success; `1` on a startup or configuration error; `124` on a timeout;
   a failing command's own exit status is passed through.
-- **Configuration schema** — the top-level keys `commands` and `failFast`, and the command
-  fields `cmd`, `run`, `timeout`, `dir`,
+- **Configuration schema** — the top-level keys `commands`, `failFast` and `envFile`, and the command
+  fields `cmd`, `run`, `timeout`, `restart`, `restartAttempts`, `restartDelay`, `envFile`, `dir`,
   `pipe`, `disable`, `env`, `format.cmdName`, `docker.*`, plus the `%CMD_NAME%` / `%CMD_ARGS%`
   placeholders.
 - **Execution semantics** — chains run in parallel; inside a chain non-`pipe` commands run

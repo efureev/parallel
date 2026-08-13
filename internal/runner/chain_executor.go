@@ -215,7 +215,9 @@ func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandCha
 
 		if cmd.Pipe {
 			piped.Go(func() error {
-				err := c.runner.ExecuteWithPipe(ctx, chain, cmd)
+				err := c.runWithRestart(ctx, chain, cmd, func(runCtx context.Context) error {
+					return c.runner.ExecuteWithPipe(runCtx, chain, cmd)
+				})
 				pipedErrs[i] = err
 
 				return err
@@ -224,7 +226,10 @@ func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandCha
 			continue
 		}
 
-		if err := c.runner.Execute(ctx, chain, cmd); err != nil {
+		err := c.runWithRestart(ctx, chain, cmd, func(runCtx context.Context) error {
+			return c.runner.Execute(runCtx, chain, cmd)
+		})
+		if err != nil {
 			firstErr = err
 
 			break
@@ -241,6 +246,93 @@ func (c *chainExecutor) executeChain(ctx context.Context, chain *flow.CommandCha
 	// сигнал. Показать её в сводке как «ok» значило бы выдать убитое за
 	// доработавшее, а именно на сводку и смотрят, когда что-то пошло не так.
 	return ctx.Err() != nil, joined
+}
+
+// Границы задержки между перезапусками.
+const (
+	// defaultRestartDelay — с чего начинается ожидание, если restartDelay не задан.
+	defaultRestartDelay = time.Second
+	// maxRestartDelay — потолок роста. Без него `always` на мгновенно падающей
+	// команде за минуту дал бы миллионы запусков.
+	maxRestartDelay = 30 * time.Second
+	// restartBackoffFactor — во сколько раз растёт задержка после каждой попытки.
+	restartBackoffFactor = 2
+)
+
+// runWithRestart выполняет команду, повторяя запуск согласно её политике.
+//
+// Вся политика живёт здесь, а не в супервизии процессов: перезапуск — это
+// решение о том, запускать ли команду снова, и оно не зависит от того, как
+// именно она была запущена. Поэтому обе формы, потоковая и обычная,
+// обслуживаются одной обёрткой и отличаются только функцией run.
+func (c *chainExecutor) runWithRestart(
+	ctx context.Context,
+	chain *flow.CommandChain,
+	cmd flow.Command,
+	run func(context.Context) error,
+) error {
+	delay := cmd.RestartDelay
+	if delay <= 0 {
+		delay = defaultRestartDelay
+	}
+
+	for attempt := 1; ; attempt++ {
+		err := run(ctx)
+
+		// Отмена проверяется раньше политики: после Ctrl+C перезапускать нечего
+		// и незачем. Иначе команда поднималась бы заново быстрее, чем её
+		// успевают снять, и остановить запуск стало бы невозможно.
+		if ctx.Err() != nil {
+			return err
+		}
+
+		if !cmd.Restart.ShouldRestart(err) {
+			return err
+		}
+
+		if cmd.RestartAttempts > 0 && attempt >= cmd.RestartAttempts {
+			return restartExhausted(err, attempt)
+		}
+
+		c.lgr.Info("Restarting command",
+			ui.F("chain", chain.GetChainName()),
+			ui.F("command", cmd.DisplayName()),
+			ui.F("attempt", attempt+1),
+			ui.F("delay", delay.String()))
+
+		if !sleepOrCancel(ctx, delay) {
+			return err
+		}
+
+		delay = min(delay*restartBackoffFactor, maxRestartDelay)
+	}
+}
+
+// sleepOrCancel ждёт указанное время и сообщает, дождались ли: false означает
+// отмену контекста. Голый сон здесь недопустим — он сделал бы Ctrl+C
+// неотзывчивым ровно на величину задержки.
+func sleepOrCancel(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+// restartExhausted сообщает, что попытки кончились.
+//
+// Обёртка именно через %w: иначе ExitCode перестанет находить в дереве ошибок
+// *ExitError, и собственный код упавшей команды потеряется.
+func restartExhausted(err error, attempts int) error {
+	if err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("%w (gave up after %d attempts)", err, attempts)
 }
 
 // joinChainErrors объединяет ошибку, оборвавшую цепочку, с ошибками pipe-команд,

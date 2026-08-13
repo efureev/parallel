@@ -20,6 +20,9 @@ var (
 	ErrNoChains       = errors.New("flow must contain at least one chain")
 	ErrEmptyChainName = errors.New("chain name cannot be empty")
 	ErrEmptyChain     = errors.New("chain must contain at least one command")
+
+	// ErrUnknownRestartPolicy — значение поля restart вне перечисления.
+	ErrUnknownRestartPolicy = errors.New("unknown restart policy")
 )
 
 // Flow — разобранная конфигурация: набор цепочек, выполняемых параллельно.

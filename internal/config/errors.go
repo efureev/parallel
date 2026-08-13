@@ -20,6 +20,14 @@ var (
 	ErrConfigDecode = errors.New("cannot decode config file")
 	// ErrNoAdHocCommands — команды после `--` не заданы или пусты.
 	ErrNoAdHocCommands = errors.New("no commands to run")
+	// ErrEnvFileRead — файл переменных окружения не найден или нечитаем.
+	ErrEnvFileRead = errors.New("cannot read env file")
+	// ErrEnvFileSyntax — строка файла переменных не разбирается.
+	ErrEnvFileSyntax = errors.New("malformed env file line")
+	// ErrUndefinedVariable — ссылка на переменную без значения и без умолчания.
+	ErrUndefinedVariable = errors.New("undefined variable")
+	// ErrNegativeValue — числовое поле получило отрицательное значение.
+	ErrNegativeValue = errors.New("value cannot be negative")
 	// ErrCmdAndRun — заданы одновременно cmd и run.
 	ErrCmdAndRun = errors.New("command cannot use both 'cmd' and 'run'")
 	// ErrMissingCommands — в конфигурации нет верхнеуровневого ключа commands.

@@ -7,6 +7,7 @@
 
 # failFast: false   # не останавливать соседние цепочки при отказе одной из них;
                     # то же самое даёт флаг -keep-going
+# envFile: .env     # общие переменные для всех команд; можно списком файлов
 
 commands:
   # Смешанная цепочка. Не-pipe команды идут последовательно, pipe-команды
@@ -18,6 +19,10 @@ commands:
     serve:
       pipe: true
       # timeout: 30s   # снять команду, если не уложилась; то же для всех сразу даёт -timeout
+      # restart: on-failure   # поднимать заново после отказа
+      # restartAttempts: 5    # 0 или не задано — без ограничения
+      # restartDelay: 1s      # стартовая задержка, дальше удваивается
+      # envFile: .env.api     # переменные только этой команды, поверх общих
       cmd: [ 'sh', '-c', 'for i in 1 2 3; do echo "serving request $i"; sleep 1; done' ]
       format:
         cmdName: '%CMD_NAME%'

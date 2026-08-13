@@ -22,6 +22,7 @@ import (
 const (
 	commandsKey = "commands"
 	failFastKey = "failFast"
+	envFileKey  = "envFile"
 )
 
 // knownTopLevelFields — ключи, которые утилита понимает на верхнем уровне.
@@ -32,7 +33,7 @@ const (
 // а схема заморожена с v1.0.0.
 //
 //nolint:gochecknoglobals // неизменяемый список, константой объявить нельзя
-var knownTopLevelFields = []string{commandsKey, failFastKey}
+var knownTopLevelFields = []string{commandsKey, failFastKey, envFileKey}
 
 // knownCommandFields — имена полей команды в том виде, в каком их пишут в YAML.
 // Список нужен только для подсказки при опечатке; источник истины — yaml-теги
@@ -41,6 +42,7 @@ var knownTopLevelFields = []string{commandsKey, failFastKey}
 //nolint:gochecknoglobals // неизменяемый список, массивом объявить нельзя
 var knownCommandFields = []string{
 	"cmd", "run", "docker", "dir", "pipe", "disable", "env", "format", "timeout",
+	"restart", "restartAttempts", "restartDelay", "envFile",
 }
 
 // FileMarshaller разбирает содержимое файла конфигурации.
@@ -77,6 +79,39 @@ type command struct {
 	Format  format
 	// Timeout — предел на выполнение команды. Ноль означает «без предела».
 	Timeout time.Duration `yaml:"timeout"`
+
+	// Restart разбирается строкой, а не сразу в flow.RestartPolicy: неизвестное
+	// значение должно давать понятный отказ со списком допустимых, а не
+	// молчаливое «не перезапускать».
+	Restart         string        `yaml:"restart"`
+	RestartAttempts int           `yaml:"restartAttempts"`
+	RestartDelay    time.Duration `yaml:"restartDelay"`
+
+	// EnvFile — файлы переменных окружения этой команды, поверх верхнеуровневых.
+	EnvFile stringList `yaml:"envFile"`
+}
+
+// stringList принимает и одиночное значение, и список: envFile пишут обеими
+// формами, и требовать список ради одного файла было бы придиркой.
+type stringList []string
+
+// UnmarshalYAML реализует goccy-интерфейс InterfaceUnmarshaler.
+func (l *stringList) UnmarshalYAML(unmarshal func(any) error) error {
+	var single string
+	if err := unmarshal(&single); err == nil {
+		*l = stringList{single}
+
+		return nil
+	}
+
+	var many []string
+	if err := unmarshal(&many); err != nil {
+		return err
+	}
+
+	*l = many
+
+	return nil
 }
 
 // NamedCommand связывает спецификацию команды с её именем, сохраняя порядок.
@@ -101,6 +136,10 @@ type Data struct {
 	// файла — разные вещи, потому что флаг командной строки сильнее только
 	// второго.
 	FailFast *bool
+
+	// EnvFiles — верхнеуровневые файлы переменных окружения: действуют на все
+	// команды и читаются один раз на весь Flow.
+	EnvFiles []string
 
 	// TopLevelHints — предупреждения о ключах верхнего уровня, похожих на
 	// известные. Возвращаются данными, а не пишутся в лог: слой конфигурации
@@ -208,6 +247,13 @@ func parseData(body ast.Node) (Data, error) {
 
 	cfg.FailFast = failFast
 
+	envFiles, err := parseEnvFiles(root)
+	if err != nil {
+		return Data{}, err
+	}
+
+	cfg.EnvFiles = envFiles
+
 	commandsNode := lookup(root, commandsKey)
 	if commandsNode == nil {
 		return cfg, nil
@@ -251,6 +297,21 @@ func parseFailFast(root []*ast.MappingValueNode) (*bool, error) {
 	}
 
 	return &value, nil
+}
+
+// parseEnvFiles читает верхнеуровневый ключ envFile.
+func parseEnvFiles(root []*ast.MappingValueNode) ([]string, error) {
+	node := lookup(root, envFileKey)
+	if node == nil {
+		return nil, nil
+	}
+
+	var value stringList
+	if err := yaml.NodeToValue(node, &value, yaml.Strict()); err != nil {
+		return nil, fmt.Errorf("%w %q: %w", ErrConfigDecode, envFileKey, err)
+	}
+
+	return value, nil
 }
 
 // topLevelHints ищет ключи верхнего уровня, похожие на известные.
@@ -359,11 +420,16 @@ func unknownFieldHint(err error) string {
 
 // closestField ищет известное поле, ближайшее к введённому.
 //
-// Два правила вместо одного. Расстояние редактирования ловит перестановки и
-// лишние буквы («diir» → «dir»), но бессильно против дописанного окончания:
-// «pipeline» отстоит от «pipe» на четыре правки, а это ровно та опечатка,
-// ради которой всё затевалось. Поэтому общий префикс считается совпадением
-// сам по себе.
+// Два правила, и порядок между ними существенен. Сначала расстояние
+// редактирования: оно ловит перестановки и лишние буквы («diir» → «dir»).
+// Только если ни один кандидат не оказался достаточно близко, в дело вступает
+// общий префикс — он нужен против дописанного окончания: «pipeline» отстоит
+// от «pipe» на четыре правки, а это ровно та опечатка, ради которой правило
+// и заводилось.
+//
+// Обратный порядок ломается на однокоренных именах: «restartAttemps»
+// начинается с «restart», и правило префикса увело бы подсказку к нему вместо
+// «restartAttempts», отстоящего на одну правку.
 //
 // Порог расстояния намеренно низкий: при трёх «xyz» оказывается одинаково
 // близко к «env», «dir» и «cmd», и подсказка становится вредной.
@@ -374,25 +440,37 @@ func closestField(field string, known []string) string {
 	)
 
 	lower := strings.ToLower(field)
+
 	best, bestDist := "", maxDistance+1
 
 	for _, name := range known {
-		lowerName := strings.ToLower(name)
-
-		if len(name) >= minPrefixLen && (strings.HasPrefix(lower, lowerName) || strings.HasPrefix(lowerName, lower)) {
-			return name
-		}
-
-		if d := editDistance(lower, lowerName); d < bestDist {
+		if d := editDistance(lower, strings.ToLower(name)); d < bestDist {
 			best, bestDist = name, d
 		}
 	}
 
-	if bestDist > maxDistance {
-		return ""
+	if bestDist <= maxDistance {
+		return best
 	}
 
-	return best
+	// Ни одно имя не близко по правкам — ищем самый длинный общий префикс:
+	// из «restart» и «restartAttempts» для «restartAttemp» вернуть надо второе.
+	longest := ""
+
+	for _, name := range known {
+		lowerName := strings.ToLower(name)
+		if len(name) < minPrefixLen {
+			continue
+		}
+
+		if strings.HasPrefix(lower, lowerName) || strings.HasPrefix(lowerName, lower) {
+			if len(name) > len(longest) {
+				longest = name
+			}
+		}
+	}
+
+	return longest
 }
 
 // editDistance — расстояние Левенштейна между строками.

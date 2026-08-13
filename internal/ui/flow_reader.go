@@ -62,6 +62,10 @@ func (f *FlowReader) Out(fl *flow.Flow) {
 				b.WriteString(fmt.Sprintf("        Limit: %s\n", cmd.Timeout))
 			}
 
+			if cmd.Restart != "" && cmd.Restart != flow.RestartNever {
+				b.WriteString(fmt.Sprintf("        Retry: %s\n", restartSummary(cmd)))
+			}
+
 			if cmd.Disable {
 				b.WriteString("        Disabled : true\n")
 			}
@@ -73,6 +77,20 @@ func (f *FlowReader) Out(fl *flow.Flow) {
 	}
 
 	f.lgr.Info(b.String())
+}
+
+// restartSummary описывает политику перезапуска одной строкой.
+func restartSummary(cmd flow.Command) string {
+	attempts := "unlimited"
+	if cmd.RestartAttempts > 0 {
+		attempts = fmt.Sprintf("%d attempts", cmd.RestartAttempts)
+	}
+
+	if cmd.RestartDelay > 0 {
+		return fmt.Sprintf("%s, %s, delay %s", cmd.Restart, attempts, cmd.RestartDelay)
+	}
+
+	return fmt.Sprintf("%s, %s", cmd.Restart, attempts)
 }
 
 // List печатает состав конфигурации: имена цепочек и их размер.
