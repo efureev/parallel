@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/efureev/parallel/internal/ui"
 )
@@ -60,6 +61,10 @@ type Config struct {
 	// NoColor принудительно отключает раскраску.
 	NoColor bool
 
+	// CommandTimeout — предел выполнения для всех команд; поле timeout
+	// у самой команды его перекрывает. Ноль означает «без предела».
+	CommandTimeout time.Duration
+
 	// KeepGoing — отказ цепочки не останавливает соседние.
 	KeepGoing bool
 	// KeepGoingSet различает «флаг не передавали» и «передали -keep-going=false».
@@ -93,6 +98,8 @@ Flags:
   -no-color          disable colored output (NO_COLOR is respected too)
   -keep-going        do not stop the other chains when one of them fails
                      (overrides failFast from the configuration file)
+  -timeout <dur>     stop any command that runs longer than this, e.g. 30s or 5m
+                     (a command's own 'timeout' field wins over this)
   -log-level <level> debug, info, warn or error (default "info")
   -v, --version      show version information and exit
   -h, --help         show this help and exit
@@ -108,6 +115,7 @@ Examples:
   parallel -list                        # what does this configuration define?
   parallel -dry-run api                 # what exactly would 'parallel api' run?
   parallel -keep-going                  # report every failure, not just the first
+  parallel -timeout 5m                  # no command may run longer than five minutes
   parallel -- 'go run ./cmd/api' 'yarn dev'   # no configuration file at all
 
 Documentation: https://github.com/efureev/parallel
@@ -123,6 +131,7 @@ func bindFlags(fs *flag.FlagSet, cfg *Config, logLevel, except *string) {
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "Show what would run and exit")
 	fs.BoolVar(&cfg.NoColor, "no-color", false, "Disable colored output")
 	fs.BoolVar(&cfg.KeepGoing, "keep-going", false, "Do not stop other chains when one fails")
+	fs.DurationVar(&cfg.CommandTimeout, "timeout", 0, "Stop any command running longer than this")
 	fs.StringVar(logLevel, "log-level", defaultLogLevel, "Log level: debug, info, warn, error")
 	// Support both -v and -version flags.
 	fs.BoolVar(&cfg.VersionRequested, "v", false, "Show version information and exit")

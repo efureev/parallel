@@ -64,6 +64,7 @@ Flags are supported currently:
 - `-list` — list the chains the configuration defines, then exit
 - `-dry-run` — show exactly what would run, then exit without starting anything
 - `-keep-going` — do not stop the other chains when one of them fails
+- `-timeout <duration>` — stop any command running longer than this (e.g. `30s`, `5m`)
 - `-no-color` — disable colored output
 - `-log-level` — `debug`, `info` (default), `warn` or `error`
 - `-v`, `--version` — version info
@@ -77,6 +78,7 @@ parallel -except worker                      # everything but this one
 parallel -list                               # what does this configuration define?
 parallel -dry-run api                        # what exactly would `parallel api` run?
 parallel -keep-going                          # report every failure, not just the first
+parallel -timeout 5m                          # no command may run longer than five minutes
 parallel -- 'go run ./cmd/api' 'yarn dev'    # no configuration file at all
 ```
 
@@ -92,6 +94,9 @@ Parallel is CI/script friendly and reports a meaningful exit status:
 
 - `0` — all chains finished successfully (also for `-v` and `-h`).
 - `1` — startup or configuration error: missing file, unknown field, invalid flag.
+- `124` — a command was stopped because it exceeded its `timeout`. The value follows the
+  convention of `timeout(1)`: a stopped process has no exit status of its own, so one has to be
+  chosen.
 - *the command's own exit code* — when a command fails, its status is passed through, so
   `parallel -f flow.yaml || echo $?` reports what actually happened. If several commands fail,
   the first one in configuration order wins.
@@ -138,7 +143,7 @@ Summary:
 ```
 
 `stopped` means the chain did not fail on its own — it was cut short, either by a sibling chain
-failing or by Ctrl+C.
+failing or by Ctrl+C. `timed out` means a command exceeded its limit and was stopped.
 
 ## Screenshots
 
@@ -207,6 +212,11 @@ commands: # list of parallel command chains
   **configuration file**, not the current directory, so a config committed next to the project
   works from anywhere. A path that does not exist produces a warning at startup, not an error:
   the directory may be created by an earlier command in the chain.
+- `timeout: 30s` — stop the command if it runs longer than this. Accepts any Go duration
+  (`500ms`, `30s`, `1m30s`) — a bare number is rejected, because `timeout: 30` reads as seconds
+  but means nothing without a unit. The command is stopped the same way Ctrl+C stops it — signal
+  first, kill only if it does not exit — so whatever it printed before being stopped is still
+  shown. Overrides `-timeout`; without either there is no limit.
 - `disable: true` — disable a command without removing it from config. Disabled commands are shown in the flow preview
   and are skipped during execution. Default: `false`.
 - `env: { KEY: value }` — environment variables for this command. They are **added to** the environment `parallel`
@@ -398,14 +408,14 @@ commands:
 Starting with `v1.0.0` the following is frozen and will not change without a `v2`:
 
 - **CLI flags** — `-f <path>`, `-v`, `--version`, `-list`, `-dry-run`, `-except`, `-no-color`,
-  `-keep-going`;
+  `-keep-going`, `-timeout`;
   positional arguments select chains and `--` starts config-less mode; the default config name
   `.parallelrc.yaml`
   (`.parallelrc.yml` is also accepted), looked up in the current directory and its parents.
-- **Exit codes** — `0` on success; `1` on a startup or configuration error; a failing command's
-  own exit status is passed through.
+- **Exit codes** — `0` on success; `1` on a startup or configuration error; `124` on a timeout;
+  a failing command's own exit status is passed through.
 - **Configuration schema** — the top-level keys `commands` and `failFast`, and the command
-  fields `cmd`, `run`, `dir`,
+  fields `cmd`, `run`, `timeout`, `dir`,
   `pipe`, `disable`, `env`, `format.cmdName`, `docker.*`, plus the `%CMD_NAME%` / `%CMD_ARGS%`
   placeholders.
 - **Execution semantics** — chains run in parallel; inside a chain non-`pipe` commands run

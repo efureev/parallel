@@ -3,11 +3,13 @@ package runner
 import (
 	"errors"
 	"fmt"
+	"time"
 )
 
 var (
 	ErrCommandExecution = errors.New("command execution failed")
 	ErrPipeCreation     = errors.New("pipe creation failed")
+	ErrCommandTimeout   = errors.New("command timed out")
 )
 
 // minExitCode и maxExitCode — диапазон кодов, которые имеет смысл передавать
@@ -17,6 +19,13 @@ const (
 	minExitCode = 1
 	maxExitCode = 255
 )
+
+// timeoutExitCode — код возврата для команды, снятой по таймауту.
+//
+// 124 выбран не произвольно: так поступает timeout(1) из GNU coreutils, и
+// скрипты это значение уже умеют читать. Собственного кода у снятого процесса
+// нет, так что выбирать всё равно приходится нам.
+const timeoutExitCode = 124
 
 // ExitError — команда завершилась с ненулевым кодом.
 //
@@ -42,6 +51,26 @@ func (e *ExitError) Unwrap() error { return ErrCommandExecution }
 func (e *ExitError) Usable() bool {
 	return e.Code >= minExitCode && e.Code <= maxExitCode
 }
+
+// TimeoutError — команда не уложилась в отведённое время и была снята.
+//
+// Отдельный тип, а не ExitError с кодом 124: причина принципиально другая, и
+// в сводке она показывается своим статусом. Общее у них только то, что обе
+// дают код возврата.
+type TimeoutError struct {
+	Chain   string
+	Command string
+	Limit   time.Duration
+}
+
+func (e *TimeoutError) Error() string {
+	return fmt.Sprintf("%s: command %q in chain %q exceeded the limit of %s",
+		ErrCommandTimeout.Error(), e.Command, e.Chain, e.Limit)
+}
+
+// Unwrap позволяет вызывающему проверять факт таймаута через errors.Is,
+// не зная про сам тип.
+func (e *TimeoutError) Unwrap() error { return ErrCommandTimeout }
 
 // ExitCode выбирает код возврата для набора ошибок выполнения.
 //
@@ -90,6 +119,10 @@ func collectExitCodes(err error, acc []int) []int {
 		}
 
 		return acc
+	}
+
+	if _, ok := err.(*TimeoutError); ok {
+		return append(acc, timeoutExitCode)
 	}
 
 	switch u := err.(type) {

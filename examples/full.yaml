@@ -17,6 +17,7 @@ commands:
 
     serve:
       pipe: true
+      # timeout: 30s   # снять команду, если не уложилась; то же для всех сразу даёт -timeout
       cmd: [ 'sh', '-c', 'for i in 1 2 3; do echo "serving request $i"; sleep 1; done' ]
       format:
         cmdName: '%CMD_NAME%'

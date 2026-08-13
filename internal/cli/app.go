@@ -178,6 +178,21 @@ func preview(flags *Config, result *flow.Flow, logger ui.Logger) (done bool) {
 	return false
 }
 
+// managerOptions переводит разобранные флаги и политику запуска в опции менеджера.
+func managerOptions(flags *Config, plan *runPlan) []runner.Option {
+	var opts []runner.Option
+
+	if plan.keepGoing {
+		opts = append(opts, runner.WithKeepGoing())
+	}
+
+	if flags.CommandTimeout > 0 {
+		opts = append(opts, runner.WithCommandTimeout(flags.CommandTimeout))
+	}
+
+	return opts
+}
+
 // runApplication поднимает конфигурацию, запускает выполнение и обслуживает
 // сигналы завершения.
 func runApplication(
@@ -198,12 +213,7 @@ func runApplication(
 		return nil
 	}
 
-	var managerOpts []runner.Option
-	if plan.keepGoing {
-		managerOpts = append(managerOpts, runner.WithKeepGoing())
-	}
-
-	manager := runner.NewManager(logger, formatter, managerOpts...)
+	manager := runner.NewManager(logger, formatter, managerOptions(flags, plan)...)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -258,6 +268,10 @@ func summaryRows(results []runner.ChainResult, interrupted bool) []ui.SummaryRow
 		row := ui.SummaryRow{Name: res.Name, Status: ui.StatusOK, Duration: res.Duration}
 
 		switch {
+		case errors.Is(res.Err, runner.ErrCommandTimeout):
+			// Проверяется раньше общего отказа: таймаут это тоже отказ, но
+			// причина у него своя, и в сводке она важнее самого факта.
+			row.Status, row.Reason = ui.StatusTimedOut, res.Err.Error()
 		case res.Failed():
 			row.Status, row.Reason = ui.StatusFailed, res.Err.Error()
 		case res.Stopped || interrupted:

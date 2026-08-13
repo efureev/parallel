@@ -157,7 +157,8 @@ func (b *FlowBuilder) createDockerCommand(cmdName string, cmdRaw command) flow.C
 		Pipe:    true,
 		Disable: cmdRaw.Disable,
 		// Env намеренно пуст: переменные уже ушли в аргументы флагами -e.
-		Format: flow.Format{CmdName: cmdRaw.Format.CmdName},
+		Format:  flow.Format{CmdName: cmdRaw.Format.CmdName},
+		Timeout: cmdRaw.Timeout,
 	}
 }
 
@@ -205,5 +206,6 @@ func (b *FlowBuilder) createRegularCommand(cmdName string, cmdRaw command) (flow
 		Disable: cmdRaw.Disable,
 		Env:     envPairs(cmdRaw.Env),
 		Format:  flow.Format{CmdName: format},
+		Timeout: cmdRaw.Timeout,
 	}, nil
 }

@@ -58,6 +58,10 @@ type Manager struct {
 	// keepGoing переносится в chainExecutor при сборке: опции применяются
 	// до его создания, поэтому передать значение напрямую нельзя.
 	keepGoing bool
+
+	// commandLimit — предел на команду, заданный флагом -timeout. Поле
+	// timeout у самой команды сильнее.
+	commandLimit time.Duration
 }
 
 // Option настраивает менеджер при создании.
@@ -72,6 +76,15 @@ type Option func(*Manager)
 // и продолжать после отказа значило бы работать с заведомо неверным состоянием.
 func WithKeepGoing() Option {
 	return func(m *Manager) { m.keepGoing = true }
+}
+
+// WithCommandTimeout задаёт предел выполнения для всех команд сразу.
+//
+// Не путать с WithTimeouts: та настраивает лестницу остановки уже снимаемого
+// процесса, а эта решает, когда его вообще пора снимать. Поле timeout
+// у команды перекрывает это значение.
+func WithCommandTimeout(d time.Duration) Option {
+	return func(m *Manager) { m.commandLimit = d }
 }
 
 func WithTimeouts(t Timeouts) Option {
@@ -243,6 +256,58 @@ func (m *Manager) stopCommand(
 	<-waitDone
 }
 
+// commandTimeout возвращает предел для конкретной команды: собственный, если
+// задан, иначе общий из флага. Ноль означает «без предела».
+func (m *Manager) commandTimeout(command flow.Command) time.Duration {
+	if command.Timeout > 0 {
+		return command.Timeout
+	}
+
+	return m.commandLimit
+}
+
+// withCommandDeadline ограничивает время выполнения команды.
+//
+// Именно контекст, а не собственный таймер с Kill: отмена запускает ту же
+// лестницу остановки, что и Ctrl+C, — сигнал группе, затем убийство, затем
+// ограниченное ожидание дочитывания вывода. Прямое убийство потеряло бы хвост
+// вывода, а он и объясняет, на чём команда встала.
+func (m *Manager) withCommandDeadline(
+	ctx context.Context, command flow.Command,
+) (context.Context, context.CancelFunc, time.Duration) {
+	limit := m.commandTimeout(command)
+	if limit <= 0 {
+		return ctx, func() {}, 0
+	}
+
+	runCtx, cancel := context.WithTimeout(ctx, limit)
+
+	return runCtx, cancel, limit
+}
+
+// stopError решает, чем была остановка команды: исчерпанным пределом, отменой
+// снаружи или отказом самой команды.
+//
+// Различие берётся из контекста команды, а не из текста ошибки: дедлайн даёт
+// DeadlineExceeded, отмена родителя — Canceled, и перепутать их нельзя.
+func (m *Manager) stopError(
+	runCtx context.Context, chain *flow.CommandChain, command flow.Command, limit time.Duration, err error,
+) error {
+	if limit > 0 && errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return &TimeoutError{
+			Chain:   chainName(chain),
+			Command: command.DisplayName(),
+			Limit:   limit,
+		}
+	}
+
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return err
+	}
+
+	return m.completionError(chain, command, err)
+}
+
 func (m *Manager) Execute(ctx context.Context, chain *flow.CommandChain, command flow.Command) error {
 	//nolint:gosec // command/args come from trusted config for CLI tool
 	cmd := exec.Command(command.Cmd, command.Args...)
@@ -264,14 +329,17 @@ func (m *Manager) Execute(ctx context.Context, chain *flow.CommandChain, command
 
 	m.lgr.Info("Command started: " + ui.FullDisplayName(chainName(chain), command))
 
+	runCtx, cancel, limit := m.withCommandDeadline(ctx, command)
+	defer cancel()
+
 	// Вывод не-pipe команды собирается в буферы самим exec.Cmd, поэтому здесь
 	// «завершиться полностью» и «дождаться процесса» — одно и то же.
-	if err := m.supervise(ctx, cmd, chainName(chain), command, cmd.Wait, nil); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return err
-		}
+	if err := m.supervise(runCtx, cmd, chainName(chain), command, cmd.Wait, nil); err != nil {
+		// Вывод печатается и при снятии по таймауту: он и объясняет, на чём
+		// команда встала, а молчащий отказ не объясняет ничего.
+		m.printBlock(chain, command, stdoutBuf.Bytes(), stderrBuf.Bytes())
 
-		return m.completionError(chain, command, err)
+		return m.stopError(runCtx, chain, command, limit, err)
 	}
 
 	m.printBlock(chain, command, stdoutBuf.Bytes(), stderrBuf.Bytes())
@@ -363,6 +431,9 @@ func (m *Manager) ExecuteWithPipe(ctx context.Context, chain *flow.CommandChain,
 
 	wg := m.streamPipes(outputCtx, chain, command, stdout, stderr)
 
+	runCtx, cancel, limit := m.withCommandDeadline(ctx, command)
+	defer cancel()
+
 	// «Завершиться полностью» для piped-команды — это сначала дочитать вывод
 	// до EOF, и только потом собрать статус процесса.
 	waitFn := func() error {
@@ -371,12 +442,8 @@ func (m *Manager) ExecuteWithPipe(ctx context.Context, chain *flow.CommandChain,
 		return cmd.Wait()
 	}
 
-	if err := m.supervise(ctx, cmd, chainName(chain), command, waitFn, abandonOutput); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return err
-		}
-
-		return m.completionError(chain, command, err)
+	if err := m.supervise(runCtx, cmd, chainName(chain), command, waitFn, abandonOutput); err != nil {
+		return m.stopError(runCtx, chain, command, limit, err)
 	}
 
 	return nil

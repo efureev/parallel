@@ -58,6 +58,10 @@ func (f *FlowReader) Out(fl *flow.Flow) {
 				b.WriteString("        Pipe : true\n")
 			}
 
+			if cmd.Timeout > 0 {
+				b.WriteString(fmt.Sprintf("        Limit: %s\n", cmd.Timeout))
+			}
+
 			if cmd.Disable {
 				b.WriteString("        Disabled : true\n")
 			}

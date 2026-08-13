@@ -8,9 +8,10 @@ import (
 
 // Статусы цепочки в итоговой сводке.
 const (
-	StatusOK      = "ok"
-	StatusFailed  = "failed"
-	StatusStopped = "stopped"
+	StatusOK       = "ok"
+	StatusFailed   = "failed"
+	StatusStopped  = "stopped"
+	StatusTimedOut = "timed out"
 )
 
 // SummaryRow — строка итоговой сводки.
@@ -48,7 +49,7 @@ func PrintSummary(lgr Logger, rows []SummaryRow) {
 	b.WriteString("Summary:\n")
 
 	for _, row := range rows {
-		b.WriteString(fmt.Sprintf("  %-*s  %-7s  %s",
+		b.WriteString(fmt.Sprintf("  %-*s  %-9s  %s",
 			width, row.Name, row.Status, formatDuration(row.Duration)))
 
 		if row.Reason != "" {

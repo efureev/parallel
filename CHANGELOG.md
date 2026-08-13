@@ -22,6 +22,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   One consequence worth knowing: with `-keep-going` a failing chain no longer cuts short a
   long-running sibling, so a run that includes a dev server will not finish on its own.
+- **A `timeout` per command and a global `-timeout` flag.** A hung command used to hold the whole
+  run until Ctrl+C, which in CI is the worst outcome: instead of a report you get a job killed by
+  the overall limit, with nothing in the log to say which command stalled. `timeout: 30s` on a
+  command overrides the flag; without either there is no limit. A bare number is rejected — the
+  error says a unit is required, because `timeout: 30` reads as seconds but means nothing on its
+  own.
+
+  The command is stopped through the same ladder as Ctrl+C — signal to the process group, kill
+  only if it does not exit, then a bounded wait for the output to drain. Killing it outright
+  would have been simpler but would lose the tail of the output, and that tail is exactly what
+  explains where the command stalled.
+
+  A timed-out run exits with `124`, following the convention of `timeout(1)`: a stopped process
+  has no exit status of its own, so one has to be chosen. In the summary such a chain gets its
+  own `timed out` status rather than a plain `failed`.
 - **A warning for top-level keys that look like a typo.** `failFats: false` used to do nothing
   and say nothing. Unknown top-level keys stay accepted — rejecting them would break
   configurations that keep YAML anchors there, and the schema has been frozen since `v1.0.0` — so

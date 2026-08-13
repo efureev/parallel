@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/goccy/go-yaml"
 	"github.com/goccy/go-yaml/ast"
@@ -38,7 +39,9 @@ var knownTopLevelFields = []string{commandsKey, failFastKey}
 // структуры command ниже, и при добавлении поля его надо дописать сюда же.
 //
 //nolint:gochecknoglobals // неизменяемый список, массивом объявить нельзя
-var knownCommandFields = []string{"cmd", "run", "docker", "dir", "pipe", "disable", "env", "format"}
+var knownCommandFields = []string{
+	"cmd", "run", "docker", "dir", "pipe", "disable", "env", "format", "timeout",
+}
 
 // FileMarshaller разбирает содержимое файла конфигурации.
 type FileMarshaller interface {
@@ -72,6 +75,8 @@ type command struct {
 	Disable bool              `yaml:"disable"`
 	Env     map[string]string `yaml:"env"`
 	Format  format
+	// Timeout — предел на выполнение команды. Ноль означает «без предела».
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 // NamedCommand связывает спецификацию команды с её именем, сохраняя порядок.
@@ -311,7 +316,24 @@ func decodeError(cmdName, chainName string, err error) error {
 		msg += ", " + hint
 	}
 
+	if hint := durationHint(err); hint != "" {
+		msg += ", " + hint
+	}
+
 	return fmt.Errorf("%s: %w", msg, err)
+}
+
+// durationHint объясняет отказ разбора длительности.
+//
+// Голое «cannot unmarshal uint64 into ... time.Duration» не подсказывает
+// главного: числу нужна единица измерения. Пишут `timeout: 30`, имея в виду
+// секунды, и остаются гадать.
+func durationHint(err error) string {
+	if !strings.Contains(err.Error(), "time.Duration") {
+		return ""
+	}
+
+	return `длительность задаётся с единицей измерения: "30s", "1m30s", "500ms"`
 }
 
 // unknownFieldRe вытаскивает имя поля из сообщения goccy про неизвестное поле.

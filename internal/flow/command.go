@@ -1,6 +1,9 @@
 package flow
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // ErrEmptyCommand возвращается Command.Validate, когда не задан исполняемый файл.
 var ErrEmptyCommand = errors.New("command cannot be empty")
@@ -23,6 +26,9 @@ type Command struct {
 	// Они дополняют окружение процесса, а не заменяют его: перечислять
 	// весь PATH ради одной переменной никто не станет.
 	Env []string
+	// Timeout — предел на выполнение команды; ноль означает «без предела»
+	// и оставляет решение глобальному флагу -timeout.
+	Timeout time.Duration
 }
 
 // DisplayName возвращает имя для показа: заданное в конфигурации либо сам исполняемый файл.
