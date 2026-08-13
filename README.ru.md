@@ -579,7 +579,9 @@ go build -o parallel ./cmd/parallel
 - `make lint` — `golangci-lint`
 - `make fmt` — форматирование (goimports + `gofmt -s` + `go mod tidy`)
 
-Список заметных изменений — в [`CHANGELOG.md`](CHANGELOG.md).
+Список заметных изменений — в [`CHANGELOG.md`](CHANGELOG.md). Перед pull request стоит
+прочитать [`CONTRIBUTING.md`](CONTRIBUTING.md): у линтера, границ слоёв и сборки под Windows
+есть требования, не очевидные из кода.
 
 Проект следует стандартной раскладке Go, по пакету на слой:
 

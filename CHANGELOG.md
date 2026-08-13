@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   One consequence worth knowing: with `-keep-going` a failing chain no longer cuts short a
   long-running sibling, so a run that includes a dev server will not finish on its own.
+- **`CONTRIBUTING.md`.** The requirements here are stricter than usual and none of them are
+  visible from the code: the linter must be run through `make lint` rather than from `PATH`,
+  `GOOS=windows go vet` catches breakage the local build never will, layer boundaries are
+  enforced by `depguard`, and four invariants in the process runner fail silently when broken.
+  Until now a contributor learned these from red CI, one per push.
 - **Pre-release tags are published as pre-releases.** A tag with a SemVer pre-release suffix
   (`v1.2.0-rc1`, `v2.0.0-beta.1`) used to be published as an ordinary release, which made GitHub
   mark it "latest". The build still runs and still uploads binaries — the artifacts are the whole

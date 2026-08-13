@@ -574,7 +574,9 @@ The repository also ships `make` targets (run inside Docker, no local tooling re
 - `make lint` — run `golangci-lint`
 - `make fmt` — format the code (goimports + `gofmt -s` + `go mod tidy`)
 
-See [`CHANGELOG.md`](CHANGELOG.md) for the list of notable changes.
+See [`CHANGELOG.md`](CHANGELOG.md) for the list of notable changes, and
+[`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request — the linter, the layer
+boundaries and the Windows build have requirements that are not obvious from the code.
 
 The project follows the standard Go layout, one package per layer:
 
