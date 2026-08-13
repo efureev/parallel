@@ -137,8 +137,16 @@ jobs:
       - name: Display structure of downloaded files
         run: ls -R
 
+      # Тег с суффиксом после дефиса (v1.2.0-rc1, v2.0.0-beta.1) — предрелиз
+      # по SemVer, и публиковать его как обычный релиз нельзя: он встал бы
+      # в GitHub как «latest», и `go install ...@latest` начал бы отдавать
+      # release candidate всем подряд.
+      #
+      # Собирать и публиковать rc при этом надо: артефакты нужны именно для
+      # того, чтобы его проверить. Поэтому не условие на job, а флаг предрелиза.
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             dist/**/parallel.*

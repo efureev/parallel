@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   One consequence worth knowing: with `-keep-going` a failing chain no longer cuts short a
   long-running sibling, so a run that includes a dev server will not finish on its own.
+- **Pre-release tags are published as pre-releases.** A tag with a SemVer pre-release suffix
+  (`v1.2.0-rc1`, `v2.0.0-beta.1`) used to be published as an ordinary release, which made GitHub
+  mark it "latest". The build still runs and still uploads binaries — the artifacts are the whole
+  point of a release candidate — but the release itself is now flagged accordingly.
 - **Dependencies between chains: `needs`, `ready` and `maxParallel`.** Chains used to be entirely
   independent, so "bring up the database, wait until it accepts connections, then start the API"
   could not be expressed at all — the single biggest reason to reach for `docker compose` or
