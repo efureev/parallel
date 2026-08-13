@@ -65,6 +65,12 @@ type Config struct {
 	// у самой команды его перекрывает. Ноль означает «без предела».
 	CommandTimeout time.Duration
 
+	// Jobs ограничивает число одновременно работающих цепочек; перекрывает
+	// верхнеуровневый maxParallel. Ноль означает «без ограничения».
+	Jobs int
+	// JobsSet различает «флаг не передавали» и «передали 0».
+	JobsSet bool
+
 	// KeepGoing — отказ цепочки не останавливает соседние.
 	KeepGoing bool
 	// KeepGoingSet различает «флаг не передавали» и «передали -keep-going=false».
@@ -100,6 +106,7 @@ Flags:
                      (overrides failFast from the configuration file)
   -timeout <dur>     stop any command that runs longer than this, e.g. 30s or 5m
                      (a command's own 'timeout' field wins over this)
+  -jobs <n>          run at most n chains at a time (overrides maxParallel)
   -log-level <level> debug, info, warn or error (default "info")
   -v, --version      show version information and exit
   -h, --help         show this help and exit
@@ -116,6 +123,7 @@ Examples:
   parallel -dry-run api                 # what exactly would 'parallel api' run?
   parallel -keep-going                  # report every failure, not just the first
   parallel -timeout 5m                  # no command may run longer than five minutes
+  parallel -jobs 2                      # at most two chains running at a time
   parallel -- 'go run ./cmd/api' 'yarn dev'   # no configuration file at all
 
 Documentation: https://github.com/efureev/parallel
@@ -132,6 +140,7 @@ func bindFlags(fs *flag.FlagSet, cfg *Config, logLevel, except *string) {
 	fs.BoolVar(&cfg.NoColor, "no-color", false, "Disable colored output")
 	fs.BoolVar(&cfg.KeepGoing, "keep-going", false, "Do not stop other chains when one fails")
 	fs.DurationVar(&cfg.CommandTimeout, "timeout", 0, "Stop any command running longer than this")
+	fs.IntVar(&cfg.Jobs, "jobs", 0, "Run at most n chains at a time")
 	fs.StringVar(logLevel, "log-level", defaultLogLevel, "Log level: debug, info, warn, error")
 	// Support both -v and -version flags.
 	fs.BoolVar(&cfg.VersionRequested, "v", false, "Show version information and exit")
@@ -215,6 +224,7 @@ func ParseFlags(opts ...Option) (*Config, error) {
 	cfg.Chains = fs.Args()
 	cfg.Except = splitList(except)
 	cfg.KeepGoingSet = explicitlySet(fs, "keep-going")
+	cfg.JobsSet = explicitlySet(fs, "jobs")
 
 	if err := cfg.validate(); err != nil {
 		return nil, err

@@ -60,8 +60,9 @@ func resolveConfigPath(configPath string, logger ui.Logger) (string, error) {
 // отказе» — свойство запуска, а не конфигурации команд, и домену о нём знать
 // незачем.
 type runPlan struct {
-	flow      flow.Flow
-	keepGoing bool
+	flow        flow.Flow
+	keepGoing   bool
+	maxParallel int
 }
 
 // loadFlow собирает план: либо из команд, переданных после `--`, либо из файла
@@ -71,7 +72,7 @@ func loadFlow(flags *Config, logger ui.Logger) (runPlan, error) {
 		adHoc, err := config.AdHoc(flags.AdHoc)
 
 		// Файла нет, значит и ключа failFast быть не может — решает только флаг.
-		return runPlan{flow: adHoc, keepGoing: resolveKeepGoing(flags, nil)}, err
+		return runPlan{flow: adHoc, keepGoing: resolveKeepGoing(flags, nil), maxParallel: flags.Jobs}, err
 	}
 
 	resolved, err := resolveConfigPath(flags.ConfigFilePath, logger)
@@ -94,7 +95,21 @@ func loadFlow(flags *Config, logger ui.Logger) (runPlan, error) {
 
 	built, err := config.NewFlowBuilder().Build(configData)
 
-	return runPlan{flow: built, keepGoing: resolveKeepGoing(flags, configData.FailFast)}, err
+	return runPlan{
+		flow:        built,
+		keepGoing:   resolveKeepGoing(flags, configData.FailFast),
+		maxParallel: resolveJobs(flags, configData.MaxParallel),
+	}, err
+}
+
+// resolveJobs сводит флаг -jobs и ключ maxParallel: явный флаг сильнее файла,
+// как и у остальных настроек запуска.
+func resolveJobs(flags *Config, maxParallel int) int {
+	if flags.JobsSet {
+		return flags.Jobs
+	}
+
+	return maxParallel
 }
 
 // resolveKeepGoing сводит флаг командной строки и ключ конфигурации в одно
@@ -125,8 +140,16 @@ func initializeApp(flags *Config, logger ui.Logger) (*runPlan, error) {
 
 	result := plan.flow
 
-	// Отбор идёт до валидации: она обязана относиться к тому, что реально
-	// запустится, иначе исключённая цепочка мешала бы запуску остальных.
+	// Граф проверяется до отбора: цикл и ссылка на несуществующую цепочку —
+	// свойства конфигурации целиком, и прятать их за отбором нельзя.
+	if err := flow.ValidateDeps(result); err != nil {
+		logger.Error(err, "Invalid chain dependencies")
+
+		return nil, err
+	}
+
+	// Отбор идёт до валидации команд: она обязана относиться к тому, что
+	// реально запустится. Предшественники подтягиваются самим Select.
 	result, err = flow.Select(result, flags.Chains, flags.Except)
 	if err != nil {
 		logger.Error(err, "Invalid chain selection")
@@ -188,6 +211,10 @@ func managerOptions(flags *Config, plan *runPlan) []runner.Option {
 
 	if flags.CommandTimeout > 0 {
 		opts = append(opts, runner.WithCommandTimeout(flags.CommandTimeout))
+	}
+
+	if plan.maxParallel > 0 {
+		opts = append(opts, runner.WithMaxParallel(plan.maxParallel))
 	}
 
 	return opts
@@ -268,6 +295,13 @@ func summaryRows(results []runner.ChainResult, interrupted bool) []ui.SummaryRow
 		row := ui.SummaryRow{Name: res.Name, Status: ui.StatusOK, Duration: res.Duration}
 
 		switch {
+		case res.Skipped:
+			// «Не начинали» и «оборвали» — разные вещи, и в сводке их надо
+			// различать: первое означает невыполненное условие, а не сбой.
+			row.Status = ui.StatusSkipped
+			if res.Err != nil {
+				row.Reason = res.Err.Error()
+			}
 		case errors.Is(res.Err, runner.ErrCommandTimeout):
 			// Проверяется раньше общего отказа: таймаут это тоже отказ, но
 			// причина у него своя, и в сводке она важнее самого факта.

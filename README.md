@@ -65,6 +65,7 @@ Flags are supported currently:
 - `-dry-run` — show exactly what would run, then exit without starting anything
 - `-keep-going` — do not stop the other chains when one of them fails
 - `-timeout <duration>` — stop any command running longer than this (e.g. `30s`, `5m`)
+- `-jobs <n>` — run at most `n` chains at a time (overrides `maxParallel`)
 - `-no-color` — disable colored output
 - `-log-level` — `debug`, `info` (default), `warn` or `error`
 - `-v`, `--version` — version info
@@ -150,7 +151,8 @@ keep running while the attempts last.
 > trap: set `restartAttempts` there.
 
 `stopped` means the chain did not fail on its own — it was cut short, either by a sibling chain
-failing or by Ctrl+C. `timed out` means a command exceeded its limit and was stopped.
+failing or by Ctrl+C. `timed out` means a command exceeded its limit and was stopped. `skipped`
+means the chain never started, because something it `needs` failed or never became ready.
 
 ## Screenshots
 
@@ -259,6 +261,52 @@ commands:
         APP_ENV: development
         PORT: '8080'
 ```
+
+### Dependencies between chains
+
+A chain can wait for another one with `needs`, and a command can say when it counts as ready:
+
+```yaml
+maxParallel: 4          # top level: never run more than four chains at once
+commands:
+  db:
+    postgres:
+      pipe: true
+      cmd: [ 'docker', 'run', '--rm', '-p', '5432:5432', 'postgres:17' ]
+      ready:
+        tcp: '127.0.0.1:5432'     # or exec: [...], or logLine: '...'
+        timeout: 30s
+  api:
+    needs: [ db ]
+    serve:
+      pipe: true
+      cmd: [ 'go', 'run', './cmd/api' ]
+```
+
+`ready` takes exactly one condition — two at once is an error, since there would be no saying
+which one decides:
+
+- `tcp: 'host:port'` — the address starts accepting connections;
+- `exec: [ 'pg_isready', '-q' ]` — the command exits with status 0;
+- `logLine: 'ready to accept'` — the text appears in the chain's output (stdout or stderr).
+
+`timeout` defaults to 30s. When it runs out, the dependent chains do not start and the summary
+says which condition was never met.
+
+**A chain with no `ready` is ready once it has finished successfully.** Migrations and builds do
+not listen on a port, and "wait for it" means exactly that for them. A chain that does have a
+`ready` condition opens the way as soon as the condition holds — it does not have to finish,
+which is the whole point for a server that never does.
+
+`needs` is a **reserved key** inside a chain: every other key there is a command name. Naming a
+command `needs` is no longer possible, and doing so fails with a message saying why.
+
+Selecting a subset pulls in what it depends on: `parallel api` runs `db` as well, and `-list`
+shows it. A cycle in the dependencies is refused before anything starts, and the error spells
+the cycle out (`a -> b -> c -> a`).
+
+`maxParallel` (or `-jobs n`, which overrides it) caps how many chains run at once. Waiting for a
+dependency happens *before* a slot is taken, so a limit cannot deadlock a graph.
 
 ### Environment variables
 
@@ -485,14 +533,15 @@ commands:
 Starting with `v1.0.0` the following is frozen and will not change without a `v2`:
 
 - **CLI flags** — `-f <path>`, `-v`, `--version`, `-list`, `-dry-run`, `-except`, `-no-color`,
-  `-keep-going`, `-timeout`;
+  `-keep-going`, `-timeout`, `-jobs`;
   positional arguments select chains and `--` starts config-less mode; the default config name
   `.parallelrc.yaml`
   (`.parallelrc.yml` is also accepted), looked up in the current directory and its parents.
 - **Exit codes** — `0` on success; `1` on a startup or configuration error; `124` on a timeout;
   a failing command's own exit status is passed through.
-- **Configuration schema** — the top-level keys `commands`, `failFast` and `envFile`, and the command
-  fields `cmd`, `run`, `timeout`, `restart`, `restartAttempts`, `restartDelay`, `envFile`, `dir`,
+- **Configuration schema** — the top-level keys `commands`, `failFast`, `envFile` and
+  `maxParallel`; the chain key `needs`; and the command fields `cmd`, `run`, `timeout`, `ready`,
+  `restart`, `restartAttempts`, `restartDelay`, `envFile`, `dir`,
   `pipe`, `disable`, `env`, `format.cmdName`, `docker.*`, plus the `%CMD_NAME%` / `%CMD_ARGS%`
   placeholders.
 - **Execution semantics** — chains run in parallel; inside a chain non-`pipe` commands run

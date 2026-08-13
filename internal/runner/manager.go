@@ -62,6 +62,9 @@ type Manager struct {
 	// commandLimit — предел на команду, заданный флагом -timeout. Поле
 	// timeout у самой команды сильнее.
 	commandLimit time.Duration
+
+	// maxParallel переносится в chainExecutor при сборке, как и keepGoing.
+	maxParallel int
 }
 
 // Option настраивает менеджер при создании.
@@ -87,6 +90,11 @@ func WithCommandTimeout(d time.Duration) Option {
 	return func(m *Manager) { m.commandLimit = d }
 }
 
+// WithMaxParallel ограничивает число одновременно работающих цепочек.
+func WithMaxParallel(n int) Option {
+	return func(m *Manager) { m.maxParallel = n }
+}
+
 func WithTimeouts(t Timeouts) Option {
 	return func(m *Manager) { m.timeouts = t.normalize() }
 }
@@ -109,6 +117,10 @@ func NewManager(logger ui.Logger, formatter *ui.OutputFormatter, opts ...Option)
 	var chainOpts []chainOption
 	if m.keepGoing {
 		chainOpts = append(chainOpts, withKeepGoing())
+	}
+
+	if m.maxParallel > 0 {
+		chainOpts = append(chainOpts, withMaxParallel(m.maxParallel))
 	}
 
 	m.chains = newChainExecutor(logger, m, m.stopAllCommands, chainOpts...)
@@ -463,12 +475,23 @@ func (m *Manager) streamPipes(
 	// заново на каждую строку вывода.
 	div := m.output.Divider()
 
+	// Условие готовности вида logLine ждёт появления подстроки в выводе, и
+	// единственное место, где строка уже собрана, — здесь. Наблюдатель дешёвый:
+	// без запуска он выходит по nil-указателю.
+	name := chainName(chain)
+
 	stdoutHandler := func(chainNameStyleText, cmdName, content string, counter int) {
+		m.chains.observeLine(name, content)
+
 		cmdNameStyled := fmt.Sprintf(`%s (%d) %s`, cmdName, counter, div)
 		m.lgr.Blocks(chainNameStyleText, cmdNameStyled, content)
 	}
 
 	stderrHandler := func(chainNameStyleText, cmdName, content string, counter int) {
+		// Готовность часто печатается именно в stderr — туда пишут журналы
+		// многие серверы.
+		m.chains.observeLine(name, content)
+
 		m.lgr.ErrorBlocks(errors.New(content), chainNameStyleText, cmdName)
 	}
 

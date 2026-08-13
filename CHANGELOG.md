@@ -22,6 +22,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   One consequence worth knowing: with `-keep-going` a failing chain no longer cuts short a
   long-running sibling, so a run that includes a dev server will not finish on its own.
+- **Dependencies between chains: `needs`, `ready` and `maxParallel`.** Chains used to be entirely
+  independent, so "bring up the database, wait until it accepts connections, then start the API"
+  could not be expressed at all — the single biggest reason to reach for `docker compose` or
+  `overmind` instead.
+
+  A command declares when it counts as ready with exactly one of `tcp`, `exec` or `logLine`, and
+  a chain waits for others with `needs`. A chain that declares no readiness condition is ready
+  once it has finished successfully — migrations and builds do not listen on a port, and waiting
+  for them means waiting for the exit. A chain that does declare one opens the way as soon as
+  the condition holds, without having to finish, which is the entire point for a server that
+  never does.
+
+  `needs` is a reserved key inside a chain, since every other key there is a command name; using
+  it as a command name now fails with a message that says so. Cycles are refused before anything
+  starts and the error spells the cycle out. Selecting a subset pulls in what it depends on, so
+  `parallel api` runs `db` too.
+
+  `maxParallel`, or the `-jobs` flag that overrides it, caps how many chains run at once. Waiting
+  for a dependency happens before a slot is taken rather than after, so a limit cannot deadlock a
+  graph — the obvious implementation with `errgroup.SetLimit` would have let a dependent hold the
+  only slot while waiting for the predecessor that needs it.
+
+  Chains that never start because a dependency failed are reported as `skipped` rather than
+  `failed`: "never began" and "was cut short" are different things, and the summary is read
+  precisely when telling them apart matters.
 - **Docker mode understands `volumes`, `network` and `args`.** Until now it covered only the
   image, ports, `pull` and `--rm`, so any non-trivial container sent you back to writing a raw
   `cmd:` — the mode was a showcase rather than a shortcut. Relative host paths in a volume

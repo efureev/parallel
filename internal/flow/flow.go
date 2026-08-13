@@ -23,6 +23,8 @@ var (
 
 	// ErrUnknownRestartPolicy — значение поля restart вне перечисления.
 	ErrUnknownRestartPolicy = errors.New("unknown restart policy")
+	// ErrNegativeTimeout — отрицательный срок ожидания.
+	ErrNegativeTimeout = errors.New("timeout cannot be negative")
 )
 
 // Flow — разобранная конфигурация: набор цепочек, выполняемых параллельно.
@@ -68,6 +70,9 @@ type CommandChain struct {
 	Name     string
 	commands []Command
 	ColorIdx int
+
+	// Needs — цепочки, готовности которых надо дождаться перед запуском.
+	Needs []string
 }
 
 func (cc *CommandChain) GetChainName() string {

@@ -38,6 +38,10 @@ type Command struct {
 	RestartAttempts int
 	// RestartDelay — задержка перед первым повтором; дальше удваивается.
 	RestartDelay time.Duration
+
+	// Ready — признак, по которому команда считается готовой к использованию.
+	// Указатель: отсутствие условия — нормальное состояние, а не пустое.
+	Ready *ReadyCondition
 }
 
 // DisplayName возвращает имя для показа: заданное в конфигурации либо сам исполняемый файл.
@@ -55,5 +59,5 @@ func (cmd Command) Validate() error {
 		return ErrEmptyCommand
 	}
 
-	return nil
+	return cmd.Ready.Validate()
 }

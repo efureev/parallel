@@ -20,9 +20,15 @@ import (
 
 // Верхнеуровневые ключи конфигурации.
 const (
-	commandsKey = "commands"
-	failFastKey = "failFast"
-	envFileKey  = "envFile"
+	commandsKey    = "commands"
+	failFastKey    = "failFast"
+	envFileKey     = "envFile"
+	maxParallelKey = "maxParallel"
+
+	// needsKey — зарезервированное имя внутри цепочки. Все остальные ключи
+	// там — имена команд, поэтому зависимость приходится обрабатывать
+	// отдельной веткой, до общего пути разбора.
+	needsKey = "needs"
 )
 
 // knownTopLevelFields — ключи, которые утилита понимает на верхнем уровне.
@@ -33,7 +39,7 @@ const (
 // а схема заморожена с v1.0.0.
 //
 //nolint:gochecknoglobals // неизменяемый список, константой объявить нельзя
-var knownTopLevelFields = []string{commandsKey, failFastKey, envFileKey}
+var knownTopLevelFields = []string{commandsKey, failFastKey, envFileKey, maxParallelKey}
 
 // knownCommandFields — имена полей команды в том виде, в каком их пишут в YAML.
 // Список нужен только для подсказки при опечатке; источник истины — yaml-теги
@@ -42,7 +48,7 @@ var knownTopLevelFields = []string{commandsKey, failFastKey, envFileKey}
 //nolint:gochecknoglobals // неизменяемый список, массивом объявить нельзя
 var knownCommandFields = []string{
 	"cmd", "run", "docker", "dir", "pipe", "disable", "env", "format", "timeout",
-	"restart", "restartAttempts", "restartDelay", "envFile",
+	"restart", "restartAttempts", "restartDelay", "envFile", "ready",
 }
 
 // FileMarshaller разбирает содержимое файла конфигурации.
@@ -98,6 +104,17 @@ type command struct {
 
 	// EnvFile — файлы переменных окружения этой команды, поверх верхнеуровневых.
 	EnvFile stringList `yaml:"envFile"`
+
+	// Ready — признак готовности команды.
+	Ready *readyCondition `yaml:"ready"`
+}
+
+// readyCondition — секция ready в конфигурации.
+type readyCondition struct {
+	TCP     string        `yaml:"tcp"`
+	Exec    []string      `yaml:"exec"`
+	LogLine string        `yaml:"logLine"`
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 // stringList принимает и одиночное значение, и список: envFile пишут обеими
@@ -133,6 +150,8 @@ type NamedCommand struct {
 type ChainConfig struct {
 	Name     string
 	Commands []NamedCommand
+	// Needs — имена цепочек, готовности которых надо дождаться.
+	Needs []string
 }
 
 // Data — упорядоченное представление разобранной конфигурации.
@@ -149,6 +168,10 @@ type Data struct {
 	// EnvFiles — верхнеуровневые файлы переменных окружения: действуют на все
 	// команды и читаются один раз на весь Flow.
 	EnvFiles []string
+
+	// MaxParallel ограничивает число одновременно работающих цепочек.
+	// Ноль означает «без ограничения».
+	MaxParallel int
 
 	// TopLevelHints — предупреждения о ключах верхнего уровня, похожих на
 	// известные. Возвращаются данными, а не пишутся в лог: слой конфигурации
@@ -263,6 +286,13 @@ func parseData(body ast.Node) (Data, error) {
 
 	cfg.EnvFiles = envFiles
 
+	maxParallel, err := parseMaxParallel(root)
+	if err != nil {
+		return Data{}, err
+	}
+
+	cfg.MaxParallel = maxParallel
+
 	commandsNode := lookup(root, commandsKey)
 	if commandsNode == nil {
 		return cfg, nil
@@ -274,17 +304,9 @@ func parseData(body ast.Node) (Data, error) {
 	}
 
 	for _, chainEntry := range chains {
-		chain := ChainConfig{Name: chainEntry.Key.GetToken().Value}
-
-		for _, cmdEntry := range mappingValues(chainEntry.Value) {
-			cmdName := cmdEntry.Key.GetToken().Value
-
-			var spec command
-			if err := yaml.NodeToValue(cmdEntry.Value, &spec, yaml.Strict()); err != nil {
-				return Data{}, decodeError(cmdName, chain.Name, err)
-			}
-
-			chain.Commands = append(chain.Commands, NamedCommand{Name: cmdName, Spec: spec})
+		chain, err := parseChain(chainEntry)
+		if err != nil {
+			return Data{}, err
 		}
 
 		cfg.Chains = append(cfg.Chains, chain)
@@ -321,6 +343,72 @@ func parseEnvFiles(root []*ast.MappingValueNode) ([]string, error) {
 	}
 
 	return value, nil
+}
+
+// parseChain разбирает одну цепочку: её зависимости и команды.
+func parseChain(entry *ast.MappingValueNode) (ChainConfig, error) {
+	chain := ChainConfig{Name: entry.Key.GetToken().Value}
+
+	for _, cmdEntry := range mappingValues(entry.Value) {
+		cmdName := cmdEntry.Key.GetToken().Value
+
+		// needs — единственный ключ внутри цепочки, который не является именем
+		// команды. Обрабатывается до общего пути, иначе попал бы в разбор
+		// спецификации и дал бы невнятную ошибку про тип значения.
+		if cmdName == needsKey {
+			needs, err := parseNeeds(cmdEntry.Value, chain.Name)
+			if err != nil {
+				return ChainConfig{}, err
+			}
+
+			chain.Needs = needs
+
+			continue
+		}
+
+		var spec command
+		if err := yaml.NodeToValue(cmdEntry.Value, &spec, yaml.Strict()); err != nil {
+			return ChainConfig{}, decodeError(cmdName, chain.Name, err)
+		}
+
+		chain.Commands = append(chain.Commands, NamedCommand{Name: cmdName, Spec: spec})
+	}
+
+	return chain, nil
+}
+
+// parseMaxParallel читает верхнеуровневый ключ maxParallel.
+func parseMaxParallel(root []*ast.MappingValueNode) (int, error) {
+	node := lookup(root, maxParallelKey)
+	if node == nil {
+		return 0, nil
+	}
+
+	var value int
+	if err := yaml.NodeToValue(node, &value, yaml.Strict()); err != nil {
+		return 0, fmt.Errorf("%w %q: %w", ErrConfigDecode, maxParallelKey, err)
+	}
+
+	if value < 0 {
+		return 0, fmt.Errorf("%w: %s is %d", ErrNegativeValue, maxParallelKey, value)
+	}
+
+	return value, nil
+}
+
+// parseNeeds разбирает зависимости цепочки.
+//
+// Сообщение об ошибке прямо называет needs зарезервированным: иначе автор
+// конфигурации, назвавший так команду, получил бы жалобу на тип значения
+// и не понял бы, при чём тут это.
+func parseNeeds(node ast.Node, chainName string) ([]string, error) {
+	var needs stringList
+	if err := yaml.NodeToValue(node, &needs, yaml.Strict()); err != nil {
+		return nil, fmt.Errorf("chain %q: %q is a reserved key for chain dependencies "+
+			"and must be a list of chain names: %w", chainName, needsKey, err)
+	}
+
+	return needs, nil
 }
 
 // topLevelHints ищет ключи верхнего уровня, похожие на известные.

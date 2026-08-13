@@ -33,11 +33,15 @@ func (f *FlowReader) Out(fl *flow.Flow) {
 	}
 
 	var b strings.Builder
+
 	b.WriteString("Flow structure:" + "\n")
 
 	for i, chain := range fl.Chains {
-		chainHeader := fmt.Sprintf("  Chain %d: %s", i+1, chain.Name)
-		b.WriteString(chainHeader + "\n")
+		b.WriteString(fmt.Sprintf("  Chain %d: %s\n", i+1, chain.Name))
+
+		if len(chain.Needs) > 0 {
+			b.WriteString(fmt.Sprintf("    Needs: %s\n", strings.Join(chain.Needs, ", ")))
+		}
 
 		commands := chain.Commands()
 		if len(commands) == 0 {
@@ -47,36 +51,69 @@ func (f *FlowReader) Out(fl *flow.Flow) {
 		}
 
 		for j, cmd := range commands {
-			b.WriteString(fmt.Sprintf("    [%d] %s\n", j+1, cmd.DisplayName()))
-			b.WriteString(fmt.Sprintf("        Exec : %s %s\n", cmd.Cmd, strings.Join(cmd.Args, " ")))
-
-			if cmd.Dir != "" {
-				b.WriteString(fmt.Sprintf("        Dir  : %s\n", cmd.Dir))
-			}
-
-			if cmd.Pipe {
-				b.WriteString("        Pipe : true\n")
-			}
-
-			if cmd.Timeout > 0 {
-				b.WriteString(fmt.Sprintf("        Limit: %s\n", cmd.Timeout))
-			}
-
-			if cmd.Restart != "" && cmd.Restart != flow.RestartNever {
-				b.WriteString(fmt.Sprintf("        Retry: %s\n", restartSummary(cmd)))
-			}
-
-			if cmd.Disable {
-				b.WriteString("        Disabled : true\n")
-			}
-
-			if cmd.Format.CmdName != "" {
-				b.WriteString(fmt.Sprintf("        Name : %s\n", cmd.Format.CmdName))
-			}
+			writeCommand(&b, j+1, cmd)
 		}
 	}
 
+	writeStartOrder(&b, fl)
+
 	f.lgr.Info(b.String())
+}
+
+// writeCommand печатает одну команду со всеми заданными полями.
+func writeCommand(b *strings.Builder, num int, cmd flow.Command) {
+	b.WriteString(fmt.Sprintf("    [%d] %s\n", num, cmd.DisplayName()))
+	b.WriteString(fmt.Sprintf("        Exec : %s %s\n", cmd.Cmd, strings.Join(cmd.Args, " ")))
+
+	if cmd.Dir != "" {
+		b.WriteString(fmt.Sprintf("        Dir  : %s\n", cmd.Dir))
+	}
+
+	if cmd.Pipe {
+		b.WriteString("        Pipe : true\n")
+	}
+
+	if cmd.Timeout > 0 {
+		b.WriteString(fmt.Sprintf("        Limit: %s\n", cmd.Timeout))
+	}
+
+	if cmd.Restart != "" && cmd.Restart != flow.RestartNever {
+		b.WriteString(fmt.Sprintf("        Retry: %s\n", restartSummary(cmd)))
+	}
+
+	if cmd.Ready != nil {
+		b.WriteString(fmt.Sprintf("        Ready: %s, within %s\n", cmd.Ready.Describe(), cmd.Ready.Limit()))
+	}
+
+	if cmd.Disable {
+		b.WriteString("        Disabled\n")
+	}
+
+	if cmd.Format.CmdName != "" {
+		b.WriteString(fmt.Sprintf("        Name : %s\n", cmd.Format.CmdName))
+	}
+}
+
+// writeStartOrder дописывает порядок запуска, если зависимости заданы.
+//
+// Без него предпросмотр отвечает только на вопрос «что запустится», а с
+// зависимостями не менее важно «в каком порядке»: иначе неочевидно, почему
+// цепочка стоит и чего именно ждёт.
+func writeStartOrder(b *strings.Builder, fl *flow.Flow) {
+	// Один уровень означает, что зависимостей нет вовсе: печатать «порядок»
+	// из единственной строки — лишний шум.
+	const meaningfulLevels = 2
+
+	levels := flow.Order(*fl)
+	if len(levels) < meaningfulLevels {
+		return
+	}
+
+	b.WriteString("  Start order:\n")
+
+	for i, level := range levels {
+		b.WriteString(fmt.Sprintf("    %d) %s\n", i+1, strings.Join(level, ", ")))
+	}
 }
 
 // restartSummary описывает политику перезапуска одной строкой.
@@ -125,6 +162,10 @@ func (f *FlowReader) List(fl *flow.Flow) {
 
 		if disabled > 0 {
 			b.WriteString(fmt.Sprintf(", %d disabled", disabled))
+		}
+
+		if len(chain.Needs) > 0 {
+			b.WriteString(fmt.Sprintf(", needs %s", strings.Join(chain.Needs, ", ")))
 		}
 
 		b.WriteString("\n")

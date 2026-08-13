@@ -34,7 +34,10 @@ func Select(f Flow, include, exclude []string) (Flow, error) {
 		}
 	}
 
-	wanted := toSet(include)
+	// Предшественники подтягиваются сами: «запусти api» почти всегда означает
+	// «и то, без чего он не работает». Исключение при этом остаётся явным —
+	// если цепочку убрали через --except, её не вернёт и зависимость.
+	wanted := toSet(WithDependencies(f, include))
 	unwanted := toSet(exclude)
 
 	result := Flow{}

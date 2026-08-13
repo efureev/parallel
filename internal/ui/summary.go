@@ -12,6 +12,7 @@ const (
 	StatusFailed   = "failed"
 	StatusStopped  = "stopped"
 	StatusTimedOut = "timed out"
+	StatusSkipped  = "skipped"
 )
 
 // SummaryRow — строка итоговой сводки.

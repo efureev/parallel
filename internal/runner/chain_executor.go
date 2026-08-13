@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -29,6 +31,13 @@ type chainExecutor struct {
 
 	// keepGoing отключает остановку соседних цепочек при отказе одной из них.
 	keepGoing bool
+	// maxParallel ограничивает число одновременно работающих цепочек;
+	// ноль означает «без ограничения».
+	maxParallel int
+
+	// ready хранит гейты готовности текущего запуска. Заполняется в начале
+	// ExecuteParallel и читается в том числе слоем вывода — через observeLine.
+	ready atomic.Pointer[readySet]
 
 	// results заполняется в конце ExecuteParallel и читается уже после её
 	// возврата, поэтому синхронизации не требует: запись всех горутин
@@ -42,6 +51,21 @@ type chainOption func(*chainExecutor)
 // withKeepGoing включает режим, в котором отказ цепочки не останавливает соседей.
 func withKeepGoing() chainOption {
 	return func(c *chainExecutor) { c.keepGoing = true }
+}
+
+// withMaxParallel ограничивает число одновременно работающих цепочек.
+func withMaxParallel(n int) chainOption {
+	return func(c *chainExecutor) { c.maxParallel = n }
+}
+
+// observeLine передаёт строку вывода наблюдателям готовности.
+//
+// Вызывается слоем вывода на каждой строке, поэтому обязан быть дешёвым:
+// без запуска — выход по nil-указателю, дальше чтение под RWMutex.
+func (c *chainExecutor) observeLine(chainName, line string) {
+	if set := c.ready.Load(); set != nil {
+		set.observeLine(chainName, line)
+	}
 }
 
 func newChainExecutor(
@@ -76,6 +100,20 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.Comm
 		group, groupCtx = errgroup.WithContext(ctx)
 	}
 
+	set := newReadySet(chains)
+	c.ready.Store(set)
+
+	defer c.ready.Store(nil)
+
+	// Слоты — буферизованный канал, а не errgroup.SetLimit. Разница
+	// принципиальна: SetLimit занимает слот ещё до входа в горутину, то есть
+	// до ожидания предшественника. При маленьком лимите потомок держал бы
+	// слот, которого ждёт его собственный предок, — это взаимоблокировка.
+	var slots chan struct{}
+	if c.maxParallel > 0 {
+		slots = make(chan struct{}, c.maxParallel)
+	}
+
 	// Наблюдатель за отменой снаружи: живёт ровно столько же, сколько группа,
 	// потому что ждёт groupCtx, а тот закрывается при выходе из Wait.
 	stopped := make(chan struct{})
@@ -95,14 +133,18 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.Comm
 	durations := make([]time.Duration, len(chains))
 	interrupted := make([]bool, len(chains))
 
+	skipped := make([]bool, len(chains))
+
 	for i, chain := range chains {
 		group.Go(func() error {
 			startedAt := time.Now()
-			wasStopped, err := c.executeChain(groupCtx, chain)
+
+			wasStopped, wasSkipped, err := c.runChain(groupCtx, set, slots, chain)
 
 			durations[i] = time.Since(startedAt)
 			errs[i] = err
 			interrupted[i] = wasStopped
+			skipped[i] = wasSkipped
 
 			return err
 		})
@@ -110,9 +152,154 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.Comm
 
 	_ = group.Wait()
 
-	c.results = collectResults(chains, errs, durations, interrupted)
+	c.results = collectResults(chains, errs, durations, interrupted, skipped)
 
 	return joinRealErrors(errs)
+}
+
+// runChain проводит цепочку через все три этапа: ожидание предшественников,
+// взятие слота и собственно выполнение с параллельной проверкой готовности.
+//
+// Порядок этапов — главное решение задачи. Ожидание идёт ДО взятия слота,
+// иначе цепочка занимала бы слот, пока ждёт того, кому этот слот нужен.
+func (c *chainExecutor) runChain(
+	ctx context.Context, set *readySet, slots chan struct{}, chain *flow.CommandChain,
+) (stopped, skipped bool, err error) {
+	if depErr := c.awaitDependencies(ctx, set, chain); depErr != nil {
+		gateErr := fmt.Errorf("chain %q not started: %w", chain.Name, depErr)
+		set.gateOf(chain.Name).open(gateErr)
+
+		if errors.Is(depErr, context.Canceled) {
+			return true, false, depErr
+		}
+
+		return false, true, gateErr
+	}
+
+	if !acquire(ctx, slots) {
+		err := ctx.Err()
+		set.gateOf(chain.Name).open(err)
+
+		return true, false, err
+	}
+
+	defer release(slots)
+
+	// Проба готовности идёт параллельно самой цепочке и открывает гейт САМА,
+	// как только условие выполнено. Ждать здесь завершения цепочки нельзя:
+	// долгоживущий сервер не завершается никогда, и зависимые от него не
+	// дождались бы запуска вовсе — ровно та задача, ради которой всё затевалось.
+	readyCtx, cancelReady := context.WithCancel(ctx)
+	defer cancelReady()
+
+	readyDone := make(chan error, 1)
+
+	go func() {
+		// Цепочка без условий готовности считается готовой по завершении,
+		// и открывать её гейт отсюда нельзя: awaitChain для неё возвращает
+		// nil немедленно, то есть зависимые стартовали бы сразу.
+		if !hasReadyConditions(chain) {
+			readyDone <- nil
+
+			return
+		}
+
+		readyErr := set.awaitChain(readyCtx, chain)
+		if readyErr == nil {
+			set.gateOf(chain.Name).open(nil)
+		}
+
+		readyDone <- readyErr
+	}()
+
+	stopped, err = c.executeChain(ctx, chain)
+
+	c.settleGate(set, chain, readyDone, err)
+
+	return stopped, false, err
+}
+
+// settleGate закрывает гейт цепочки по итогам её работы — если проба готовности
+// не сделала этого раньше.
+//
+// Правило зависит от того, заданы ли условия готовности. Если заданы — решает
+// проба. Если нет — цепочка готова, когда успешно завершилась: миграции и
+// сборки не слушают портов, и «дождаться» для них означает именно это.
+//
+// Первый вызов open побеждает, поэтому успевшая раньше проба уже всё решила.
+func (c *chainExecutor) settleGate(
+	set *readySet, chain *flow.CommandChain, readyDone <-chan error, runErr error,
+) {
+	g := set.gateOf(chain.Name)
+
+	// Отказ закрывает гейт немедленно, не дожидаясь пробы: ждать готовности
+	// от упавшей команды бессмысленно, а зависимые тем временем стоят.
+	if runErr != nil {
+		g.open(fmt.Errorf("%w: chain %q", ErrDependencyFailed, chain.Name))
+
+		return
+	}
+
+	if !hasReadyConditions(chain) {
+		g.open(nil)
+
+		return
+	}
+
+	g.open(<-readyDone)
+}
+
+// hasReadyConditions сообщает, задано ли у цепочки хоть одно условие готовности.
+func hasReadyConditions(chain *flow.CommandChain) bool {
+	for _, cmd := range chain.Commands() {
+		if cmd.Ready != nil && !cmd.Disable {
+			return true
+		}
+	}
+
+	return false
+}
+
+// awaitDependencies ждёт готовности всех предшественников цепочки.
+func (c *chainExecutor) awaitDependencies(
+	ctx context.Context, set *readySet, chain *flow.CommandChain,
+) error {
+	if len(chain.Needs) == 0 {
+		return nil
+	}
+
+	c.lgr.Debug("Waiting for dependencies",
+		ui.F("chain", chain.Name), ui.F("needs", strings.Join(chain.Needs, ", ")))
+
+	for _, need := range chain.Needs {
+		if err := set.gateOf(need).wait(ctx); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// acquire берёт слот, если параллелизм ограничен. Возвращает false при отмене:
+// голое чтение из канала сделало бы Ctrl+C неотзывчивым.
+func acquire(ctx context.Context, slots chan struct{}) bool {
+	if slots == nil {
+		return true
+	}
+
+	select {
+	case <-ctx.Done():
+		return false
+	case slots <- struct{}{}:
+		return true
+	}
+}
+
+// release освобождает слот.
+func release(slots chan struct{}) {
+	if slots != nil {
+		<-slots
+	}
 }
 
 // collectResults сводит исход каждой цепочки в один срез в порядке объявления.
@@ -121,7 +308,7 @@ func (c *chainExecutor) ExecuteParallel(ctx context.Context, chains []*flow.Comm
 // отказа соседней, в сводке должна выглядеть остановленной, а не упавшей —
 // иначе один отказ выглядит как пять.
 func collectResults(
-	chains []*flow.CommandChain, errs []error, durations []time.Duration, interrupted []bool,
+	chains []*flow.CommandChain, errs []error, durations []time.Duration, interrupted, skipped []bool,
 ) []ChainResult {
 	results := make([]ChainResult, len(chains))
 
@@ -136,6 +323,7 @@ func collectResults(
 			Err:      err,
 			Duration: durations[i],
 			Stopped:  interrupted[i],
+			Skipped:  skipped[i],
 		}
 	}
 

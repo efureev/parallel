@@ -100,6 +100,7 @@ func (b *FlowBuilder) Build(data Data) (flow.Flow, error) {
 		chain := &flow.CommandChain{
 			Name:     chainCfg.Name,
 			ColorIdx: idx,
+			Needs:    chainCfg.Needs,
 		}
 
 		for _, namedCmd := range chainCfg.Commands {
@@ -122,6 +123,10 @@ func (b *FlowBuilder) Build(data Data) (flow.Flow, error) {
 
 			if cmd.Dir, err = expand(cmd.Dir, lookup); err != nil {
 				return flow.Flow{}, fmt.Errorf("chain %q, command %q, dir: %w", chainCfg.Name, namedCmd.Name, err)
+			}
+
+			if err = expandReady(cmd.Ready, lookup); err != nil {
+				return flow.Flow{}, fmt.Errorf("chain %q, command %q, ready: %w", chainCfg.Name, namedCmd.Name, err)
 			}
 
 			cmd.Dir = resolve(cmd.Dir)
@@ -199,6 +204,28 @@ func commandEnv(
 	}
 
 	return env, lookup, nil
+}
+
+// expandReady подставляет переменные в условие готовности: адрес и команда
+// проверки приходят из тех же настроек, что и сама команда.
+func expandReady(ready *flow.ReadyCondition, lookup map[string]string) error {
+	if ready == nil {
+		return nil
+	}
+
+	var err error
+
+	if ready.TCP, err = expand(ready.TCP, lookup); err != nil {
+		return err
+	}
+
+	if ready.LogLine, err = expand(ready.LogLine, lookup); err != nil {
+		return err
+	}
+
+	ready.Exec, err = expandAll(ready.Exec, lookup)
+
+	return err
 }
 
 // restartOf разбирает и проверяет политику перезапуска команды.
@@ -386,7 +413,23 @@ func (b *FlowBuilder) createDockerCommand(
 		Restart:         policy,
 		RestartAttempts: attempts,
 		RestartDelay:    delay,
+		Ready:           readyOf(cmdRaw),
 	}, nil
+}
+
+// readyOf переводит секцию ready конфигурации в доменное условие.
+// Проверку «ровно одно условие» делает домен: правило принадлежит ему.
+func readyOf(cmdRaw command) *flow.ReadyCondition {
+	if cmdRaw.Ready == nil {
+		return nil
+	}
+
+	return &flow.ReadyCondition{
+		TCP:     cmdRaw.Ready.TCP,
+		Exec:    cmdRaw.Ready.Exec,
+		LogLine: cmdRaw.Ready.LogLine,
+		Timeout: cmdRaw.Ready.Timeout,
+	}
 }
 
 // createRegularCommand собирает обычную команду из формы cmd или run.
@@ -452,5 +495,6 @@ func (b *FlowBuilder) createRegularCommand(
 		Restart:         policy,
 		RestartAttempts: attempts,
 		RestartDelay:    delay,
+		Ready:           readyOf(cmdRaw),
 	}, nil
 }

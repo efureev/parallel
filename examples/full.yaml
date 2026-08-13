@@ -8,6 +8,7 @@
 # failFast: false   # не останавливать соседние цепочки при отказе одной из них;
                     # то же самое даёт флаг -keep-going
 # envFile: .env     # общие переменные для всех команд; можно списком файлов
+# maxParallel: 4    # не запускать больше N цепочек разом; то же даёт флаг -jobs
 
 commands:
   # Смешанная цепочка. Не-pipe команды идут последовательно, pipe-команды
@@ -67,3 +68,21 @@ commands:
         # args: [ 'nginx-debug', '-g', 'daemon off;' ]  # команда КОНТЕЙНЕРА, после образа
         # removeAfterAll: false   # по умолчанию добавляется --rm
         # cmd: 'exec'             # подкоманда САМОГО docker, не команда контейнера
+
+  # Зависимость между цепочками. `needs` — зарезервированное имя внутри цепочки:
+  # все остальные ключи там считаются именами команд.
+  gate:
+    listener:
+      pipe: true
+      run: 'echo "gate: opening"; sleep 1; echo "gate: READY"; sleep 1'
+      ready:
+        # Готовность по строке в выводе. Ещё бывают tcp: 'host:port'
+        # и exec: [ 'pg_isready' ] — ровно одно условие на команду.
+        logLine: 'gate: READY'
+        timeout: 10s
+
+  after-gate:
+    needs: [ gate ]
+    greet:
+      pipe: true
+      run: 'echo "started only after gate became ready"'
