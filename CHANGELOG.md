@@ -5,7 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.2.0] - unreleased
+## [1.2.1] - 2026-08-25
+
+### Fixed
+
+- **`coverage.sh` was missing from the repository.** The `cover*.*` rule in `.gitignore`, written
+  for `coverage.out` and `coverage.html`, swallowed the threshold script itself, so the
+  `Coverage thresholds` job failed with exit 127 (`No such file or directory`) on every run.
+  There are no code changes over 1.2.0: the release exists because the Go module proxy caches
+  tags immutably and still resolves `v1.2.0` to the commit without the fix.
+
+## [1.2.0] - 2026-08-13
 
 ### Added
 
@@ -416,3 +426,4 @@ without a `/vN` suffix.
 [1.0.0]: https://github.com/efureev/parallel/releases/tag/v1.0.0
 [1.1.0]: https://github.com/efureev/parallel/releases/tag/v1.1.0
 [1.2.0]: https://github.com/efureev/parallel/releases/tag/v1.2.0
+[1.2.1]: https://github.com/efureev/parallel/releases/tag/v1.2.1
