@@ -9,6 +9,8 @@
 .DS_Store
 *.cache
 cover*.*
+# ...но не сам скрипт проверки порогов — cover*.* выше съедал и его.
+!coverage.sh
 
 /build
 .output.txt
