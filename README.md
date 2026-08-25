@@ -24,10 +24,17 @@ This README includes typical use cases and practical examples.
 Requirements: Go 1.26+ (tested on macOS/Linux/Windows)
 
 ```shell
-go install github.com/efureev/parallel@latest
+go install github.com/efureev/parallel/cmd/parallel@latest
 ```
 
-The binary will be placed at `$(go env GOPATH)/bin/parallel`.
+The binary will be placed at `$(go env GOPATH)/bin/parallel`. The package path ends in
+`/cmd/parallel` — that is where `package main` lives; the module root holds no command.
+
+A binary installed this way reports `dev` for `parallel -version`: the version, commit and
+build date come from `-ldflags -X` at release time, which `go install` does not apply. Prebuilt
+binaries carrying that metadata are attached to every
+[release](https://github.com/efureev/parallel/releases), and there is also a container image —
+see [Running from a container image](#running-from-a-container-image).
 
 ## Quick start
 
