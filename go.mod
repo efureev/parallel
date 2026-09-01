@@ -4,7 +4,7 @@ go 1.26
 
 //replace github.com/efureev/reggol => ../reggol
 
-require github.com/efureev/reggol v1.2.1
+require github.com/efureev/reggol v1.2.2
 
 require github.com/goccy/go-yaml v1.19.2
 

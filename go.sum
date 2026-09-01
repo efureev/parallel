@@ -1,5 +1,5 @@
-github.com/efureev/reggol v1.2.1 h1:JoOuT1UIVNcZPYsufo+TyXYXrQT/RYGSeS2zPVmaJHk=
-github.com/efureev/reggol v1.2.1/go.mod h1:FUE5MGoqudWs2LXnFHnoaKVIRf6xMnrd149yb21o3TM=
+github.com/efureev/reggol v1.2.2 h1:BOMX7QPcmes/lwRxb1ORqi9msMGfduSSBR28M+/wgw4=
+github.com/efureev/reggol v1.2.2/go.mod h1:FUE5MGoqudWs2LXnFHnoaKVIRf6xMnrd149yb21o3TM=
 github.com/goccy/go-yaml v1.19.2 h1:PmFC1S6h8ljIz6gMRBopkjP1TVT7xuwrButHID66PoM=
 github.com/goccy/go-yaml v1.19.2/go.mod h1:XBurs7gK8ATbW4ZPGKgcbrY1Br56PdM69F7LkFRi1kA=
 golang.org/x/sync v0.22.0 h1:SZjpbeLmrCk4xhRSZFNZW5gFUeCeFgjekvI/+gfScek=
